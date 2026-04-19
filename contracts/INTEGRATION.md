@@ -18,5 +18,6 @@ contracts/service-manifest.schema.json` whenever the models change.
   HTTP conventions for service endpoints; surfaces via the HTTP
   skeleton in `src/prism/api.py`.
 - `~/projects/dada.stream/platform/domains/content-model.md` —
-  content envelope shape this service classifies; modeled with the
-  envelope mapper in a later phase.
+  content envelope shape this service ingests and classifies;
+  modeled by `ContentEnvelope` in `src/prism/envelope.py`;
+  JSON Schema export at `contracts/content-envelope.schema.json`.

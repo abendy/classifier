@@ -14,6 +14,7 @@ dependencies = [
     "duckdb>=1.0",
     "fastapi>=0.110",
     "uvicorn>=0.27",
+    "uuid-utils>=0.10",
 ]
 
 [project.scripts]

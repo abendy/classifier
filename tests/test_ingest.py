@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -454,3 +455,50 @@ def test_stub_envelope_is_upgraded_by_later_enrichment_event(
     assert stored_after.content.body == "full tweet body with details"
     assert stored_after.system.created_at == before_created_at
     assert stored_after.system.updated_at > before_created_at
+
+
+def test_ingest_once_writes_exactly_one_run_row_per_call(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1")
+
+    stats = _run(scraper_db, classifier_conn, now=T0)
+
+    (count,) = _fetch_one(
+        classifier_conn,
+        "SELECT COUNT(*) FROM runs WHERE operation = ?",
+        ("ingest",),
+    )
+    assert count == 1
+
+    (outputs_json, status) = _fetch_one(
+        classifier_conn,
+        "SELECT outputs, status FROM runs WHERE operation = ? "
+        "ORDER BY started_at DESC LIMIT 1",
+        ("ingest",),
+    )
+    assert status == "success"
+    assert json.loads(outputs_json) == asdict(stats)
+
+
+def test_ingest_once_emits_start_and_done_log_events(
+    scraper_db: Path,
+    classifier_conn: sqlite3.Connection,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1")
+
+    stats = _run(scraper_db, classifier_conn, now=T0)
+
+    err = capsys.readouterr().err
+    events = [json.loads(line) for line in err.splitlines() if line]
+    assert [e["event"] for e in events] == ["ingest.start", "ingest.done"]
+    assert events[0]["run_id"] == events[1]["run_id"]
+    for key in asdict(stats):
+        assert events[1][key] == getattr(stats, key)

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
+from prism.audit import RunRepo, operation
 from prism.envelope_repo import EnvelopeRepo
 from prism.ingest_queue import IngestQueueRepo
+from prism.logs import log_event
 from prism.scraper_mapper import ScraperMapper
 from prism.scraper_outbox import ScraperOutboxReader
 from prism.sync_state import SyncStateRepo
@@ -51,22 +53,32 @@ def ingest_once(
     envelope_repo = EnvelopeRepo(classifier_conn)
     mapper = ScraperMapper(scraper_conn)
     outbox = ScraperOutboxReader(scraper_conn)
+    run_repo = RunRepo(classifier_conn)
 
-    observed, malformed = _poll(
-        outbox, queue_repo, sync_repo, envelope_repo, poll_limit, now
-    )
-    skipped, processed, refreshed, mapped_none, failed = _process(
-        queue_repo, envelope_repo, mapper, process_limit, now
-    )
-    return IngestStats(
-        observed=observed,
-        skipped_already_saved=skipped,
-        processed=processed,
-        refreshed=refreshed,
-        mapper_returned_none=mapped_none,
-        failed=failed,
-        malformed=malformed,
-    )
+    with operation("ingest", repo=run_repo) as op:
+        run_id = op.run_id
+        log_event("ingest.start", run_id=run_id)
+        observed, malformed = _poll(
+            outbox, queue_repo, sync_repo, envelope_repo, poll_limit, now
+        )
+        skipped, processed, refreshed, mapped_none, failed = _process(
+            queue_repo, envelope_repo, mapper, process_limit, now
+        )
+        stats = IngestStats(
+            observed=observed,
+            skipped_already_saved=skipped,
+            processed=processed,
+            refreshed=refreshed,
+            mapper_returned_none=mapped_none,
+            failed=failed,
+            malformed=malformed,
+        )
+        op.attach_outputs(asdict(stats))
+    # Only after the run is durably marked success does the terminal
+    # event fire — a failed record_success would raise above, and
+    # the "no log on error" rule leaves no success-shaped line behind.
+    log_event("ingest.done", run_id=run_id, **asdict(stats))
+    return stats
 
 
 def _poll(

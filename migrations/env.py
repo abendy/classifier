@@ -18,6 +18,12 @@ target_metadata = None  # no ORM models in this slice
 
 
 def _database_url() -> str:
+    # If the caller (e.g., a test fixture) has already set
+    # sqlalchemy.url on the Alembic config, honor it — no env
+    # variables, no globals, just the normal Alembic config API.
+    ini_url = alembic_config.get_main_option("sqlalchemy.url")
+    if ini_url:
+        return ini_url
     cfg = load_config(CONFIG_PATH)
     cfg.storage.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{cfg.storage.sqlite_path}"

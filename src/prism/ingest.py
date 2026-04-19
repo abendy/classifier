@@ -1,0 +1,210 @@
+"""One-pass orchestration from scraper outbox to saved envelopes."""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from prism.envelope_repo import EnvelopeRepo
+from prism.ingest_queue import IngestQueueRepo
+from prism.scraper_mapper import ScraperMapper
+from prism.scraper_outbox import ScraperOutboxReader
+from prism.sync_state import SyncStateRepo
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from prism.scraper_outbox import OutboxRow
+
+CURSOR_NAME = "x-sync-outbox-cursor"
+BOOKMARK_ENTITY_TYPE = "bookmark"
+BOOKMARK_CREATED_EVENT = "bookmark.created"
+TWEET_ENTITY_TYPE = "tweet"
+TWEET_REFRESH_EVENTS: frozenset[str] = frozenset({"record.synced", "record.enriched"})
+
+
+@dataclass(frozen=True)
+class IngestStats:
+    """Counters for a single ``ingest_once`` pass."""
+
+    observed: int
+    skipped_already_saved: int
+    processed: int
+    refreshed: int
+    mapper_returned_none: int
+    failed: int
+    malformed: int
+
+
+def ingest_once(
+    *,
+    scraper_conn: sqlite3.Connection,
+    classifier_conn: sqlite3.Connection,
+    poll_limit: int = 100,
+    process_limit: int = 100,
+    now: datetime | None = None,
+) -> IngestStats:
+    """Run one poll-then-process pass over the ingest pipeline."""
+    sync_repo = SyncStateRepo(classifier_conn)
+    queue_repo = IngestQueueRepo(classifier_conn)
+    envelope_repo = EnvelopeRepo(classifier_conn)
+    mapper = ScraperMapper(scraper_conn)
+    outbox = ScraperOutboxReader(scraper_conn)
+
+    observed, malformed = _poll(
+        outbox, queue_repo, sync_repo, envelope_repo, poll_limit, now
+    )
+    skipped, processed, refreshed, mapped_none, failed = _process(
+        queue_repo, envelope_repo, mapper, process_limit, now
+    )
+    return IngestStats(
+        observed=observed,
+        skipped_already_saved=skipped,
+        processed=processed,
+        refreshed=refreshed,
+        mapper_returned_none=mapped_none,
+        failed=failed,
+        malformed=malformed,
+    )
+
+
+def _poll(
+    outbox: ScraperOutboxReader,
+    queue_repo: IngestQueueRepo,
+    sync_repo: SyncStateRepo,
+    envelope_repo: EnvelopeRepo,
+    poll_limit: int,
+    now: datetime | None,
+) -> tuple[int, int]:
+    cursor_id = int(sync_repo.get(CURSOR_NAME) or "0")
+    batch = outbox.rows_after(cursor_id, limit=poll_limit)
+    observed = 0
+    malformed = 0
+    for row in batch.rows:
+        resolved = _resolve_source_id(row, envelope_repo)
+        if resolved is None:
+            continue
+        source_id, is_malformed = resolved
+        if is_malformed:
+            malformed += 1
+            continue
+        inserted = queue_repo.observe(
+            source_event_id=row.source_event_id,
+            source_id=source_id,
+            entity_type=row.entity_type,
+            event_type=row.event_type,
+            now=now,
+        )
+        if inserted:
+            observed += 1
+    if batch.next_cursor is not None:
+        sync_repo.set(CURSOR_NAME, str(batch.next_cursor), now=now)
+    return observed, malformed
+
+
+def _resolve_source_id(
+    row: OutboxRow, envelope_repo: EnvelopeRepo
+) -> tuple[str, bool] | None:
+    """Return (source_id, is_malformed) for rows we act on, None to drop silently.
+
+    - bookmark.created → tweet id extracted from the "tweetId:folderId"
+      entity_id; a malformed entity_id returns an empty source_id with
+      is_malformed=True so the caller can count it.
+    - tweet record.synced/record.enriched → enqueue only when an envelope
+      already exists for that tweet id (refresh path).
+    - anything else drops silently.
+    """
+    if row.entity_type == BOOKMARK_ENTITY_TYPE and row.event_type == BOOKMARK_CREATED_EVENT:
+        tweet_id = _extract_tweet_id(row.entity_id)
+        if tweet_id is None:
+            return "", True
+        return tweet_id, False
+    if (
+        row.entity_type == TWEET_ENTITY_TYPE
+        and row.event_type in TWEET_REFRESH_EVENTS
+        and envelope_repo.exists_by_source_id(row.entity_id)
+    ):
+        return row.entity_id, False
+    return None
+
+
+def _extract_tweet_id(bookmark_entity_id: str) -> str | None:
+    """Parse "tweetId:folderId" (or "tweetId:root") → tweet id.
+
+    Returns None when the shape doesn't match, so callers can count it
+    as malformed instead of silently inventing an odd source_id.
+    """
+    parts = bookmark_entity_id.split(":", 1)
+    if len(parts) != 2:
+        return None
+    tweet_id, folder = parts
+    if not tweet_id or not folder:
+        return None
+    return tweet_id
+
+
+def _process(
+    queue_repo: IngestQueueRepo,
+    envelope_repo: EnvelopeRepo,
+    mapper: ScraperMapper,
+    process_limit: int,
+    now: datetime | None,
+) -> tuple[int, int, int, int, int]:
+    skipped = 0
+    processed = 0
+    refreshed = 0
+    mapped_none = 0
+    failed = 0
+
+    for item in queue_repo.list_pending(limit=process_limit, now=now):
+        try:
+            envelope = mapper.fetch_envelope(item.source_id)
+        except Exception as exc:
+            queue_repo.mark_failed(
+                item.source_event_id,
+                error=repr(exc),
+                backoff_seconds=_backoff_seconds(item.attempts + 1),
+                now=now,
+            )
+            failed += 1
+            continue
+
+        if envelope is None:
+            queue_repo.mark_failed(
+                item.source_event_id,
+                error="mapper returned None",
+                backoff_seconds=_backoff_seconds(item.attempts + 1),
+                now=now,
+            )
+            mapped_none += 1
+            continue
+
+        try:
+            if envelope_repo.exists_by_source_id(item.source_id):
+                envelope_repo.refresh_by_source_id(envelope)
+                refreshed += 1
+            else:
+                envelope_repo.save(envelope)
+                processed += 1
+        except sqlite3.IntegrityError:
+            # Race: concurrent writer saved between the exists check and
+            # INSERT. Treat as already-saved; operator sees the counter.
+            skipped += 1
+        except Exception as exc:
+            queue_repo.mark_failed(
+                item.source_event_id,
+                error=repr(exc),
+                backoff_seconds=_backoff_seconds(item.attempts + 1),
+                now=now,
+            )
+            failed += 1
+            continue
+
+        queue_repo.mark_dispatched(item.source_event_id, now=now)
+
+    return skipped, processed, refreshed, mapped_none, failed
+
+
+def _backoff_seconds(attempts: int) -> int:
+    return min(3600, 30 * (2 ** (attempts - 1)))

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted — scoped to ADR 006 (bridge-internal; retires with the bridge)
 
 ## Date
 

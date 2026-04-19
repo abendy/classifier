@@ -20,6 +20,7 @@ uv run classifier config    # validate config.yaml and summarize
 uv run classifier manifest  # validate and print service.json
 uv run classifier status    # summarize the service's contract
 uv run classifier schema    # export the manifest JSON Schema
+uv run classifier db        # probe the storage layer (sqlite, vec, duckdb)
 ```
 
 Edit `config.yaml` to match your environment — the scraper DB path,

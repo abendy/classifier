@@ -1,0 +1,140 @@
+{
+  "identity": {
+    "name": "classifier",
+    "version": "0.1.0",
+    "description": "Multi-faceted content classification for any dada.stream content envelope.",
+    "language": "python",
+    "manifestVersion": "1.0.0"
+  },
+  "capabilities": [
+    {
+      "type": "classify",
+      "description": "Applies topics, subtopics, freeform tags, sentiment, and intent to content envelopes.",
+      "contentTypes": ["post", "video", "article", "email", "note", "bookmark", "audio", "image", "document"]
+    }
+  ],
+  "commands": [
+    {
+      "name": "classify-content",
+      "description": "Classify a single content envelope. Returns the enriched classification section.",
+      "parameters": [
+        {"name": "envelopeId", "type": "string", "required": true, "description": "Envelope to classify."}
+      ],
+      "response": {"type": "object", "description": "Classification section written to the envelope."},
+      "sideEffects": ["emits content-classified", "writes run record"],
+      "idempotent": false
+    },
+    {
+      "name": "reclassify-content",
+      "description": "Re-classify an envelope with the current topics/models, useful after taxonomy changes.",
+      "parameters": [
+        {"name": "envelopeId", "type": "string", "required": true, "description": "Envelope to re-classify."},
+        {"name": "reason", "type": "string", "required": false, "description": "Why (logged)."}
+      ],
+      "response": {"type": "object", "description": "Newly written classification section; the prior one is retained as a run record."},
+      "sideEffects": ["emits content-classified", "writes run record"],
+      "idempotent": false
+    },
+    {
+      "name": "get-classification",
+      "description": "Return the current classification for an envelope.",
+      "parameters": [{"name": "envelopeId", "type": "string", "required": true, "description": "Envelope."}],
+      "response": {"type": "object", "description": "Current classification section, or 404 if the envelope has not been classified."},
+      "sideEffects": [],
+      "idempotent": true
+    },
+    {
+      "name": "list-topics",
+      "description": "Return the active topic taxonomy with subtopics.",
+      "parameters": [],
+      "response": {"type": "array", "description": "List of topics, each with id, displayName, definition, and subtopics."},
+      "sideEffects": [],
+      "idempotent": true
+    },
+    {
+      "name": "get-low-confidence",
+      "description": "Return envelopes awaiting inbox review (low-confidence classifications). Each item carries the runId of the specific proposal being shown, which accept/edit must echo back.",
+      "parameters": [
+        {"name": "limit", "type": "number", "required": false, "description": "Max items.", "default": 50}
+      ],
+      "response": {"type": "array", "description": "Envelopes whose most recent classification fell below the confidence threshold, each with its runId and proposal hash, ordered for inbox triage."},
+      "sideEffects": [],
+      "idempotent": true
+    },
+    {
+      "name": "accept-classification",
+      "description": "Accept a specific proposed classification (identified by runId) as user-confirmed; promotes it to the labeled set.",
+      "parameters": [
+        {"name": "envelopeId", "type": "string", "required": true, "description": "Envelope."},
+        {"name": "runId", "type": "string", "required": true, "description": "The run whose proposal the reviewer saw. If a newer run has superseded it, the request is rejected as stale — the reviewer is redirected to the fresh proposal."}
+      ],
+      "response": {"type": "object", "description": "Label record written, including the accepted facets, the runId it was anchored to, and the labeler identity. Repeat calls for the same (envelopeId, runId) return the existing label record unchanged."},
+      "sideEffects": ["writes labels record"],
+      "idempotent": true
+    },
+    {
+      "name": "edit-classification",
+      "description": "Override facets of a specific proposed classification (identified by runId). User correction.",
+      "parameters": [
+        {"name": "envelopeId", "type": "string", "required": true, "description": "Envelope."},
+        {"name": "runId", "type": "string", "required": true, "description": "The run whose proposal the reviewer saw. Stale runIds are rejected; the reviewer is redirected to the latest proposal to re-edit."},
+        {"name": "changes", "type": "object", "required": true, "description": "Fields to override."}
+      ],
+      "response": {"type": "object", "description": "Updated classification section and the label record persisting the correction, anchored to the submitted runId."},
+      "sideEffects": ["writes labels record", "emits content-classified"],
+      "idempotent": false
+    },
+    {
+      "name": "run-eval",
+      "description": "Run the eval harness against the held-out labeled set.",
+      "parameters": [
+        {"name": "baselineRunId", "type": "string", "required": false, "description": "Optional run to diff against."}
+      ],
+      "response": {"type": "object", "description": "Eval run ID plus per-facet metric summaries and diffs against the baseline run when provided."},
+      "sideEffects": ["writes eval run record"],
+      "idempotent": false,
+      "async": true
+    }
+  ],
+  "api": {
+    "protocol": "http",
+    "host": "localhost",
+    "port": 3200,
+    "basePath": "/api/v1",
+    "endpoints": [
+      {"command": "classify-content",       "method": "POST", "path": "/classify"},
+      {"command": "reclassify-content",     "method": "POST", "path": "/classify/re"},
+      {"command": "get-classification",     "method": "GET",  "path": "/classifications/{envelopeId}"},
+      {"command": "list-topics",            "method": "GET",  "path": "/topics"},
+      {"command": "get-low-confidence",     "method": "GET",  "path": "/inbox/low-confidence"},
+      {"command": "accept-classification",  "method": "POST", "path": "/inbox/{envelopeId}/accept"},
+      {"command": "edit-classification",    "method": "POST", "path": "/inbox/{envelopeId}/edit"},
+      {"command": "run-eval",               "method": "POST", "path": "/eval"}
+    ]
+  },
+  "events": {
+    "publishes": [
+      {"type": "content-classified", "description": "Classification completed for an envelope."},
+      {"type": "content-classified-low-confidence", "description": "Classification was attempted but fell below threshold — candidate for review."}
+    ],
+    "subscribes": [
+      {"type": "content-ingested", "description": "Triggers classification when new content enters the system."}
+    ]
+  },
+  "health": {
+    "healthCheck": {"endpoint": "/health", "method": "GET", "interval": 30, "timeout": 5}
+  },
+  "configuration": {
+    "required": [
+      {"name": "DATABASE_PATH", "type": "string", "description": "SQLite DB path.", "secret": false},
+      {"name": "SCRAPER_DB_PATH", "type": "string", "description": "Path to x-sync SQLite for v1 envelope mapping.", "secret": false}
+    ],
+    "runtime": [
+      {"name": "TOPIC_CONFIDENCE_THRESHOLD", "type": "number", "description": "Below this, emit low-confidence event.", "secret": false, "default": 0.55}
+    ]
+  },
+  "dependencies": {
+    "services": [],
+    "infrastructure": ["event-bus (optional in v1 — polled outbox instead)"]
+  }
+}

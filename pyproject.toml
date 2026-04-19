@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "Multi-faceted content classification for any dada.stream content envelope."
 requires-python = ">=3.12"
 authors = [{ name = "Allan Bendy", email = "allan.bendy@gmail.com" }]
+dependencies = [
+    "pydantic>=2.9",
+    "typer>=0.12",
+]
+
+[project.scripts]
+classifier = "classifier.cli:app"
 
 [build-system]
 requires = ["hatchling"]

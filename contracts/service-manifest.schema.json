@@ -1,0 +1,669 @@
+{
+  "$defs": {
+    "Api": {
+      "additionalProperties": false,
+      "properties": {
+        "basePath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Basepath"
+        },
+        "endpoints": {
+          "items": {
+            "$ref": "#/$defs/ApiEndpoint"
+          },
+          "title": "Endpoints",
+          "type": "array"
+        },
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "title": "Port",
+          "type": "number"
+        },
+        "protocol": {
+          "enum": [
+            "http",
+            "grpc",
+            "ws"
+          ],
+          "title": "Protocol",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol",
+        "host",
+        "port",
+        "endpoints"
+      ],
+      "title": "Api",
+      "type": "object"
+    },
+    "ApiEndpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "method",
+        "path"
+      ],
+      "title": "ApiEndpoint",
+      "type": "object"
+    },
+    "Capability": {
+      "additionalProperties": false,
+      "properties": {
+        "contentTypes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contenttypes"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "ingest",
+            "classify",
+            "route",
+            "store",
+            "search",
+            "process",
+            "display",
+            "orchestrate"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "description"
+      ],
+      "title": "Capability",
+      "type": "object"
+    },
+    "Command": {
+      "additionalProperties": false,
+      "properties": {
+        "async": {
+          "default": false,
+          "title": "Async",
+          "type": "boolean"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandContext"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "idempotent": {
+          "title": "Idempotent",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "parameters": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Parameter"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameters"
+        },
+        "response": {
+          "$ref": "#/$defs/ResponseSchema"
+        },
+        "sideEffects": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sideeffects"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "response",
+        "idempotent"
+      ],
+      "title": "Command",
+      "type": "object"
+    },
+    "CommandContext": {
+      "additionalProperties": false,
+      "properties": {
+        "contentTypes": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contenttypes"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Icon"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "item",
+            "service",
+            "global"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "sourceServices": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sourceservices"
+        }
+      },
+      "required": [
+        "scope",
+        "label"
+      ],
+      "title": "CommandContext",
+      "type": "object"
+    },
+    "ConfigItem": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "default": null,
+          "title": "Default"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "secret": {
+          "title": "Secret",
+          "type": "boolean"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "description",
+        "secret"
+      ],
+      "title": "ConfigItem",
+      "type": "object"
+    },
+    "Configuration": {
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConfigItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Required"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ConfigItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime"
+        }
+      },
+      "title": "Configuration",
+      "type": "object"
+    },
+    "Dependencies": {
+      "additionalProperties": false,
+      "properties": {
+        "infrastructure": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Infrastructure"
+        },
+        "services": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Services"
+        }
+      },
+      "title": "Dependencies",
+      "type": "object"
+    },
+    "EventDeclaration": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "description"
+      ],
+      "title": "EventDeclaration",
+      "type": "object"
+    },
+    "Events": {
+      "additionalProperties": false,
+      "properties": {
+        "publishes": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EventDeclaration"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Publishes"
+        },
+        "subscribes": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EventDeclaration"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subscribes"
+        }
+      },
+      "title": "Events",
+      "type": "object"
+    },
+    "Health": {
+      "additionalProperties": false,
+      "properties": {
+        "healthCheck": {
+          "$ref": "#/$defs/HealthCheck"
+        },
+        "heartbeatInterval": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heartbeatinterval"
+        }
+      },
+      "required": [
+        "healthCheck"
+      ],
+      "title": "Health",
+      "type": "object"
+    },
+    "HealthCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "interval": {
+          "title": "Interval",
+          "type": "number"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "timeout": {
+          "title": "Timeout",
+          "type": "number"
+        }
+      },
+      "required": [
+        "endpoint",
+        "method",
+        "interval",
+        "timeout"
+      ],
+      "title": "HealthCheck",
+      "type": "object"
+    },
+    "Identity": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "language": {
+          "title": "Language",
+          "type": "string"
+        },
+        "manifestVersion": {
+          "title": "Manifestversion",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "repository": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Repository"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "description",
+        "language",
+        "manifestVersion"
+      ],
+      "title": "Identity",
+      "type": "object"
+    },
+    "Parameter": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "default": null,
+          "title": "Default"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "enum": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enum"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "number",
+            "boolean",
+            "object",
+            "array"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "required",
+        "description"
+      ],
+      "title": "Parameter",
+      "type": "object"
+    },
+    "ResponseSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "description"
+      ],
+      "title": "ResponseSchema",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api": {
+      "$ref": "#/$defs/Api"
+    },
+    "capabilities": {
+      "items": {
+        "$ref": "#/$defs/Capability"
+      },
+      "title": "Capabilities",
+      "type": "array"
+    },
+    "commands": {
+      "items": {
+        "$ref": "#/$defs/Command"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "configuration": {
+      "$ref": "#/$defs/Configuration"
+    },
+    "dependencies": {
+      "$ref": "#/$defs/Dependencies"
+    },
+    "events": {
+      "$ref": "#/$defs/Events"
+    },
+    "health": {
+      "$ref": "#/$defs/Health"
+    },
+    "identity": {
+      "$ref": "#/$defs/Identity"
+    }
+  },
+  "required": [
+    "identity",
+    "capabilities",
+    "commands",
+    "api",
+    "events",
+    "health",
+    "configuration",
+    "dependencies"
+  ],
+  "title": "ServiceManifest",
+  "type": "object"
+}

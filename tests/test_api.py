@@ -1,4 +1,4 @@
-"""Tests for the classifier HTTP API."""
+"""Tests for the prism HTTP API."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 
 from fastapi.testclient import TestClient
 
-from classifier.api import _check_health, app
-from classifier.config import StorageConfig
+from prism.api import _check_health, app
+from prism.config import StorageConfig
 
 if TYPE_CHECKING:
     import pytest
@@ -49,7 +49,7 @@ def test_check_health_returns_503_for_bad_config() -> None:
 def test_health_returns_503_when_config_load_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from classifier import api
+    from prism import api
 
     def fake_load_config(_path: Path) -> object:
         raise FileNotFoundError("config.yaml missing")

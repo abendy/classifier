@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from classifier.manifest import ServiceManifest, export_schema, load_manifest
+from prism.manifest import ServiceManifest, export_schema, load_manifest
 
 
 def test_load_manifest_happy_path() -> None:
     model = load_manifest(Path("service.json"))
-    assert model.identity.name == "classifier"
+    assert model.identity.name == "prism"
 
 
 def test_missing_response_description_is_rejected() -> None:
@@ -70,7 +70,7 @@ def test_committed_schema_matches_export() -> None:
     current = export_schema()
     assert on_disk == current, (
         "JSON Schema is stale. Re-run: "
-        "uv run classifier schema > contracts/service-manifest.schema.json"
+        "uv run prism schema > contracts/service-manifest.schema.json"
     )
 
 

@@ -1,6 +1,6 @@
 {
   "identity": {
-    "name": "classifier",
+    "name": "prism",
     "version": "0.1.0",
     "description": "Multi-faceted content classification for any dada.stream content envelope.",
     "language": "python",

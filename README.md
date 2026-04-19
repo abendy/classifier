@@ -1,4 +1,4 @@
-# classifier
+# prism
 
 Multi-faceted content classification for any dada.stream content envelope.
 
@@ -16,12 +16,12 @@ just check
 Then exercise the CLI:
 
 ```bash
-uv run classifier config    # validate config.yaml and summarize
-uv run classifier manifest  # validate and print service.json
-uv run classifier status    # summarize the service's contract
-uv run classifier schema    # export the manifest JSON Schema
-uv run classifier db        # probe the storage layer (sqlite, vec, duckdb)
-uv run classifier serve     # run the HTTP service (binds 127.0.0.1)
+uv run prism config    # validate config.yaml and summarize
+uv run prism manifest  # validate and print service.json
+uv run prism status    # summarize the service's contract
+uv run prism schema    # export the manifest JSON Schema
+uv run prism db        # probe the storage layer (sqlite, vec, duckdb)
+uv run prism serve     # run the HTTP service (binds 127.0.0.1)
 ```
 
 Edit `config.yaml` to match your environment — the scraper DB path,

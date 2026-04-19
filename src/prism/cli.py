@@ -1,4 +1,4 @@
-"""Operator CLI for the classifier service."""
+"""Operator CLI for the prism service."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import uvicorn
 from rich.console import Console
 from rich.table import Table
 
-from classifier.config import CONFIG_PATH, load_config
-from classifier.db import attach_duckdb, connect_sqlite, migration_head
-from classifier.manifest import ServiceManifest, export_schema, load_manifest
+from prism.config import CONFIG_PATH, load_config
+from prism.db import attach_duckdb, connect_sqlite, migration_head
+from prism.manifest import ServiceManifest, export_schema, load_manifest
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -133,7 +133,7 @@ def db() -> None:
 
 @app.command()
 def serve() -> None:
-    """Run the classifier HTTP service."""
+    """Run the prism HTTP service."""
     cfg = load_config(CONFIG_PATH)
     mf = load_manifest(cfg.service.manifest_path)
     if cfg.service.http_port != mf.api.port:
@@ -145,7 +145,7 @@ def serve() -> None:
         )
         raise typer.Exit(code=1)
     uvicorn.run(
-        "classifier.api:app",
+        "prism.api:app",
         host="127.0.0.1",
         port=cfg.service.http_port,
         log_level="info",

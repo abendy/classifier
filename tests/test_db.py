@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from classifier.db import attach_duckdb, connect_sqlite, migration_head
+from prism.db import attach_duckdb, connect_sqlite, migration_head
 
 if TYPE_CHECKING:
     from pathlib import Path

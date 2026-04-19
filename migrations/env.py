@@ -1,4 +1,4 @@
-"""Alembic environment for the classifier."""
+"""Alembic environment for the prism service."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from classifier.config import CONFIG_PATH, load_config
+from prism.config import CONFIG_PATH, load_config
 
 alembic_config = context.config
 

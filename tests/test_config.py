@@ -1,4 +1,4 @@
-"""Tests for the classifier config model and loader."""
+"""Tests for the prism config model and loader."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from classifier.config import Config, load_config
+from prism.config import Config, load_config
 
 
 def _config_dict() -> dict:

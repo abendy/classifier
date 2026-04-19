@@ -1,4 +1,4 @@
-# Classifier service configuration.
+# Prism service configuration.
 #
 # Copy this file to config.yaml and edit for your environment:
 #   cp config.example.yaml config.yaml
@@ -13,7 +13,7 @@ service:
   http_port: 3200
   # Path to the manifest JSON. Relative paths resolve from cwd.
   manifest_path: ./service.json
-  # Optional service registry. If set, the classifier registers on startup.
+  # Optional service registry. If set, the service registers on startup.
   registry_url: null
 
 # ── Pipeline ───────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ audit:
 # ── Storage ────────────────────────────────────────────────────────
 storage:
   # Relative paths resolve from cwd. The `data/` directory is gitignored.
-  sqlite_path: ./data/classifier.db
+  sqlite_path: ./data/prism.db
   # sqlite-vec: vector extension for embedding storage and search.
   sqlite_vec: true
   # DuckDB attach: enables analytics queries over the SQLite tables.

@@ -1,4 +1,4 @@
-"""HTTP API for the classifier service."""
+"""HTTP API for the prism service."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from classifier import __version__
-from classifier.config import CONFIG_PATH, load_config
-from classifier.db import attach_duckdb, connect_sqlite, migration_head
+from prism import __version__
+from prism.config import CONFIG_PATH, load_config
+from prism.db import attach_duckdb, connect_sqlite, migration_head
 
 if TYPE_CHECKING:
-    from classifier.config import StorageConfig
+    from prism.config import StorageConfig
 
-app = FastAPI(title="classifier", version=__version__)
+app = FastAPI(title="prism", version=__version__)
 
 
 def _check_health(storage: StorageConfig) -> tuple[dict[str, Any], int]:

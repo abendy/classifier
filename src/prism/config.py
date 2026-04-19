@@ -1,4 +1,4 @@
-"""Pydantic models and loader for the classifier service config."""
+"""Pydantic models and loader for the prism service config."""
 
 from __future__ import annotations
 

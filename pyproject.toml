@@ -12,6 +12,8 @@ dependencies = [
     "sqlalchemy>=2.0",
     "sqlite-vec>=0.1.6",
     "duckdb>=1.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
 ]
 
 [project.scripts]
@@ -29,6 +31,7 @@ dev = [
     "ruff",
     "basedpyright",
     "pytest",
+    "httpx",
 ]
 
 [tool.ruff]

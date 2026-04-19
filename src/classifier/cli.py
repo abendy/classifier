@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import typer
+import uvicorn
 from rich.console import Console
 from rich.table import Table
 
@@ -128,3 +129,24 @@ def db() -> None:
         table.add_row("Migration head", f"error: {exc}")
 
     Console().print(table)
+
+
+@app.command()
+def serve() -> None:
+    """Run the classifier HTTP service."""
+    cfg = load_config(CONFIG_PATH)
+    mf = load_manifest(cfg.service.manifest_path)
+    if cfg.service.http_port != mf.api.port:
+        typer.echo(
+            f"error: port mismatch — config.service.http_port is "
+            f"{cfg.service.http_port}, manifest api.port is {mf.api.port}. "
+            f"Update one to match the other before serving.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    uvicorn.run(
+        "classifier.api:app",
+        host="127.0.0.1",
+        port=cfg.service.http_port,
+        log_level="info",
+    )

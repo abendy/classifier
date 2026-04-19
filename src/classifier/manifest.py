@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 from pydantic.alias_generators import to_camel
 
-MANIFEST_PATH = Path("service.json")
+if TYPE_CHECKING:
+    from pathlib import Path
+
 ManifestNumber = Annotated[int | float, WithJsonSchema({"type": "number"})]
 
 

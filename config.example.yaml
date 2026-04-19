@@ -1,0 +1,76 @@
+# Classifier service configuration.
+#
+# Copy this file to config.yaml and edit for your environment:
+#   cp config.example.yaml config.yaml
+#
+# config.yaml is gitignored so environment-specific values
+# (paths, ports, future secrets) don't leak into commits.
+# If you change a shared default, update this file — never
+# commit config.yaml directly.
+
+# ── Service ────────────────────────────────────────────────────────
+service:
+  http_port: 3200
+  # Path to the manifest JSON. Relative paths resolve from cwd.
+  manifest_path: ./service.json
+  # Optional service registry. If set, the classifier registers on startup.
+  registry_url: null
+
+# ── Pipeline ───────────────────────────────────────────────────────
+pipeline:
+  embedding:
+    model: bge-m3
+    version: "1.5"
+  topic:
+    model: qwen2.5-7b-instruct
+    quantization: q4_k_m
+    # Below this confidence, emit content-classified-low-confidence
+    # for inbox triage rather than a firm assignment.
+    confidence_threshold: 0.55
+    # Number of topic prototypes to retrieve before the LLM pick.
+    retrieval_top_k: 5
+  tags:
+    model: qwen2.5-7b-instruct
+    max_tags: 6
+  # Bundle sentiment+intent into the tags LLM call to save cost.
+  # Omit bundled_with (or set to null) to run them as a separate head.
+  sentiment_intent:
+    bundled_with: tags
+
+# ── Ingest ─────────────────────────────────────────────────────────
+ingest:
+  source: x-sync-outbox
+  # Path to the scraper's SQLite DB. Defaults assume the scraper
+  # is a sibling repo at ../x-bookmarks-scraper. Adjust for your
+  # layout — this is the most likely value to change per environment.
+  scraper_db_path: ../x-bookmarks-scraper/bookmarks.db
+  poll_interval_ms: 1000
+
+# ── Audit ──────────────────────────────────────────────────────────
+audit:
+  # Phoenix is the local trace viewer. Disable if you don't run it.
+  phoenix:
+    enabled: true
+    local_url: http://localhost:6006
+  # Days of run records to keep before pruning.
+  runs_retention_days: 90
+
+# ── Storage ────────────────────────────────────────────────────────
+storage:
+  # Relative paths resolve from cwd. The `data/` directory is gitignored.
+  sqlite_path: ./data/classifier.db
+  # sqlite-vec: vector extension for embedding storage and search.
+  sqlite_vec: true
+  # DuckDB attach: enables analytics queries over the SQLite tables.
+  duckdb_attach: true
+
+# ── Jobs ───────────────────────────────────────────────────────────
+# Settings for scheduled or ad-hoc jobs (backfill, eval, dspy_compile).
+jobs:
+  backfill:
+    batch_size: 200
+  eval:
+    # Fraction of labels held out for scoring, never seen by training.
+    holdout_ratio: 0.2
+  dspy_compile:
+    max_rounds: 5

@@ -36,3 +36,6 @@ data/
 # Env files
 .env
 .env.local
+
+# Local config (copy from config.example.yaml)
+config.yaml

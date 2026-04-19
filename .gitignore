@@ -1,0 +1,38 @@
+# Planning workspace
+.project/
+
+# IDE
+.vscode/
+.idea/
+
+# LLM
+.agents/
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Virtual env
+.venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.basedpyright/
+.pyright/
+
+# OS
+.DS_Store
+
+# Local data / databases
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Env files
+.env
+.env.local

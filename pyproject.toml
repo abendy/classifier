@@ -1,0 +1,94 @@
+[project]
+name = "classifier"
+version = "0.1.0"
+description = "Multi-faceted content classification for any dada.stream content envelope."
+requires-python = ">=3.12"
+authors = [{ name = "Allan Bendy", email = "allan.bendy@gmail.com" }]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/classifier"]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "basedpyright",
+    "pytest",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "C",    # flake8-comprehensions
+    "B",    # flake8-bugbear
+    "ARG",  # unused arguments
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "RUF",  # ruff-specific
+    "SIM",  # flake8-simplify
+    "PTH",  # flake8-use-pathlib
+    "TCH",  # flake8-type-checking
+    "FA",   # future-annotations
+    "TID",  # flake8-tidy-imports
+    "PERF", # perflint
+]
+ignore = [
+    "B904",   # allow raise without from
+    "FIX002", # allow TODO/FIXME
+    "N802",   # allow do_GET method name
+    "PTH107", # gradual pathlib migration
+    "PTH110", # gradual pathlib migration
+    "PTH123", # gradual pathlib migration
+    "RUF012", # allow mutable class attrs without ClassVar for now
+    "SIM108", # allow if/else over ternary when more readable
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]       # unused-import OK in __init__
+"tests/**/*"  = ["ARG001"]     # unused-args OK for fixtures
+
+[tool.ruff.lint.isort]
+known-first-party = ["classifier"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.basedpyright]
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+autoImportCompletions = true
+
+# Critical — always error
+reportMissingImports        = "error"
+reportUndefinedVariable     = "error"
+reportUnboundVariable       = "error"
+reportAttributeAccessIssue  = "error"
+
+# Library types leak Unknown — don't fight third-party typing holes
+reportUnknownMemberType         = "none"
+reportUnknownParameterType      = "none"
+reportUnknownVariableType       = "none"
+reportMissingTypeStubs          = "none"
+reportUntypedFunctionDecorator  = "none"
+reportUntypedClassDecorator     = "none"

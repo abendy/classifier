@@ -17,3 +17,5 @@ the replacement, but the body of the old ADR is not rewritten.
 | 008 | Bypass OTel's one-shot set_tracer_provider for reconfiguration | Accepted | 2026-04-19 |
 | 009 | Terminal log events fire after the operation's span closes, with trace_id threaded explicitly | Accepted | 2026-04-19 |
 | 010 | Two-layer exception handling with identity-based deduplication in `operation()` | Accepted | 2026-04-19 |
+| 011 | Encode composite identity as a synthetic TEXT PK for vec0 tables | Accepted | 2026-04-20 |
+| 012 | DELETE-then-INSERT as upsert for vec0 virtual tables | Accepted | 2026-04-20 |

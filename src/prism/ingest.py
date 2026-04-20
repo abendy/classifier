@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from opentelemetry import trace
 
 from prism.audit import RunRepo, operation
+from prism.embedding import EMBEDDING_DIMENSION, MODEL_VERSION
+from prism.embedding_repo import EmbeddingRepo
 from prism.envelope_repo import EnvelopeRepo
 from prism.ingest_queue import IngestQueueRepo
 from prism.logs import log_event
@@ -20,6 +22,7 @@ from prism.sync_state import SyncStateRepo
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from prism.embedding import Embedder
     from prism.scraper_outbox import OutboxRow
 
 CURSOR_NAME = "x-sync-outbox-cursor"
@@ -40,12 +43,16 @@ class IngestStats:
     mapper_returned_none: int
     failed: int
     malformed: int
+    embedded: int = 0
+    embed_skipped_no_body: int = 0
+    embed_failed: int = 0
 
 
 def ingest_once(
     *,
     scraper_conn: sqlite3.Connection,
     classifier_conn: sqlite3.Connection,
+    embedder: Embedder | None = None,
     poll_limit: int = 100,
     process_limit: int = 100,
     now: datetime | None = None,
@@ -54,6 +61,7 @@ def ingest_once(
     sync_repo = SyncStateRepo(classifier_conn)
     queue_repo = IngestQueueRepo(classifier_conn)
     envelope_repo = EnvelopeRepo(classifier_conn)
+    embedding_repo = EmbeddingRepo(classifier_conn)
     mapper = ScraperMapper(scraper_conn)
     outbox = ScraperOutboxReader(scraper_conn)
     run_repo = RunRepo(classifier_conn)
@@ -71,8 +79,25 @@ def ingest_once(
         observed, malformed = _poll(
             outbox, queue_repo, sync_repo, envelope_repo, poll_limit, now
         )
-        skipped, processed, refreshed, mapped_none, failed = _process(
-            queue_repo, envelope_repo, mapper, process_limit, now
+        (
+            skipped,
+            processed,
+            refreshed,
+            mapped_none,
+            failed,
+            embedded,
+            embed_skipped_no_body,
+            embed_failed,
+        ) = _process(
+            queue_repo,
+            envelope_repo,
+            mapper,
+            process_limit,
+            now,
+            embedder=embedder,
+            run_repo=run_repo,
+            parent_run_id=run_id,
+            embedding_repo=embedding_repo,
         )
         stats = IngestStats(
             observed=observed,
@@ -82,6 +107,9 @@ def ingest_once(
             mapper_returned_none=mapped_none,
             failed=failed,
             malformed=malformed,
+            embedded=embedded,
+            embed_skipped_no_body=embed_skipped_no_body,
+            embed_failed=embed_failed,
         )
         op.attach_outputs(asdict(stats))
     duration_ms = int((time.monotonic() - started_monotonic) * 1000)
@@ -183,12 +211,20 @@ def _process(
     mapper: ScraperMapper,
     process_limit: int,
     now: datetime | None,
-) -> tuple[int, int, int, int, int]:
+    *,
+    embedder: Embedder | None,
+    run_repo: RunRepo,
+    parent_run_id: str,
+    embedding_repo: EmbeddingRepo,
+) -> tuple[int, int, int, int, int, int, int, int]:
     skipped = 0
     processed = 0
     refreshed = 0
     mapped_none = 0
     failed = 0
+    embedded = 0
+    embed_skipped_no_body = 0
+    embed_failed = 0
 
     for item in queue_repo.list_pending(limit=process_limit, now=now):
         try:
@@ -213,12 +249,21 @@ def _process(
             mapped_none += 1
             continue
 
+        stored_envelope_id: str | None = None
         try:
             if envelope_repo.exists_by_source_id(item.source_id):
-                envelope_repo.refresh_by_source_id(envelope)
+                # Refresh preserves the stored identity.id (ADR 007). The
+                # mapper-minted envelope.identity.id on the input is a
+                # per-observation UUID, not a stable handle; downstream
+                # keys (embeddings, runs rows) must use the preserved id
+                # so every observation of the same content shares one
+                # envelope-scoped identity.
+                merged = envelope_repo.refresh_by_source_id(envelope)
+                stored_envelope_id = merged.identity.id
                 refreshed += 1
             else:
                 envelope_repo.save(envelope)
+                stored_envelope_id = envelope.identity.id
                 processed += 1
         except sqlite3.IntegrityError:
             # Race: concurrent writer saved between the exists check and
@@ -234,9 +279,58 @@ def _process(
             failed += 1
             continue
 
+        if stored_envelope_id is not None and embedder is not None:
+            body = envelope.content.body
+            if not body or not body.strip():
+                embed_skipped_no_body += 1
+            else:
+                try:
+                    # correlation_id tracks the content envelope across the
+                    # pipeline (plan §Event contract); causation_id tracks the
+                    # immediate trigger — here, the parent ingest run.
+                    with operation(
+                        "embed",
+                        repo=run_repo,
+                        envelope_id=stored_envelope_id,
+                        correlation_id=stored_envelope_id,
+                        causation_id=parent_run_id,
+                    ) as embed_op:
+                        vector = embedder.embed(body)
+                        embedding_repo.save(
+                            envelope_id=stored_envelope_id,
+                            model_version=MODEL_VERSION,
+                            vector=vector,
+                            now=now,
+                        )
+                        embed_op.attach_outputs(
+                            {
+                                "model_version": MODEL_VERSION,
+                                "dimension": EMBEDDING_DIMENSION,
+                            }
+                        )
+                    embedded += 1
+                except Exception as exc:
+                    queue_repo.mark_failed(
+                        item.source_event_id,
+                        error=f"embed: {exc!r}",
+                        backoff_seconds=_backoff_seconds(item.attempts + 1),
+                        now=now,
+                    )
+                    embed_failed += 1
+                    continue
+
         queue_repo.mark_dispatched(item.source_event_id, now=now)
 
-    return skipped, processed, refreshed, mapped_none, failed
+    return (
+        skipped,
+        processed,
+        refreshed,
+        mapped_none,
+        failed,
+        embedded,
+        embed_skipped_no_body,
+        embed_failed,
+    )
 
 
 def _backoff_seconds(attempts: int) -> int:

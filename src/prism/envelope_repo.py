@@ -39,12 +39,17 @@ class EnvelopeRepo:
             if cursor is not None:
                 cursor.close()
 
-    def refresh_by_source_id(self, envelope: ContentEnvelope) -> None:
+    def refresh_by_source_id(self, envelope: ContentEnvelope) -> ContentEnvelope:
         """Update the row identified by source_id in place.
 
         Preserves the stored identity.id and system.created_at;
-        every other field is taken from `envelope`. Raises KeyError
-        when no row exists for the source_id.
+        every other field is taken from `envelope`. Returns the
+        merged envelope — callers that need the stable stored
+        identity.id (e.g., for downstream keys like embeddings)
+        read it from the return value rather than from the input
+        ``envelope``, whose identity.id is whatever the mapper
+        minted for this observation. Raises KeyError when no row
+        exists for the source_id.
         """
         if envelope.source.source_id is None:
             raise ValueError("envelope.source.source_id is required for refresh")
@@ -71,6 +76,7 @@ class EnvelopeRepo:
         finally:
             if cursor is not None:
                 cursor.close()
+        return merged
 
     def get(self, envelope_id: str) -> ContentEnvelope | None:
         """Return the envelope for id, or None when missing."""

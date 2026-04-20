@@ -19,3 +19,5 @@ the replacement, but the body of the old ADR is not rewritten.
 | 010 | Two-layer exception handling with identity-based deduplication in `operation()` | Accepted | 2026-04-19 |
 | 011 | Encode composite identity as a synthetic TEXT PK for vec0 tables | Accepted | 2026-04-20 |
 | 012 | DELETE-then-INSERT as upsert for vec0 virtual tables | Accepted | 2026-04-20 |
+| 013 | Thread both correlation_id and causation_id on per-envelope operation spans | Accepted | 2026-04-20 |
+| 014 | Mutating repo methods return the canonical post-mutation state | Accepted | 2026-04-20 |

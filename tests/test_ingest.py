@@ -10,11 +10,14 @@ from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 from alembic import command
 from alembic.config import Config
 
 from prism.db import connect_sqlite
+from prism.embedding import EMBEDDING_DIMENSION, MODEL_VERSION, Embedder
+from prism.embedding_repo import EmbeddingRepo
 from prism.envelope import ContentEnvelope
 from prism.envelope_repo import EnvelopeRepo
 from prism.ingest import CURSOR_NAME, IngestStats, ingest_once
@@ -24,7 +27,7 @@ from prism.sync_state import SyncStateRepo
 from prism.tracing import install_in_memory_exporter
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
     from pathlib import Path
 
 T0 = datetime(2026, 4, 19, 12, 0, tzinfo=UTC)
@@ -61,7 +64,7 @@ def classifier_conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     cfg = Config("alembic.ini")
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     command.upgrade(cfg, "head")
-    conn = connect_sqlite(db_path, load_vec=False)
+    conn = connect_sqlite(db_path, load_vec=True)
     try:
         yield conn
     finally:
@@ -567,3 +570,221 @@ def test_ingest_once_populates_trace_id_and_canonical_log_fields(
     # operation context (same trace_id either way — the spec's "canonical
     # log shape" on a per-operation basis).
     assert isinstance(events[1]["duration_ms"], int)
+
+
+class _StubBackend:
+    def __init__(
+        self,
+        vector: np.ndarray | None = None,
+        raises: Exception | None = None,
+    ) -> None:
+        self._vector = (
+            vector if vector is not None
+            else np.ones(EMBEDDING_DIMENSION, dtype=np.float32)
+        )
+        self._raises = raises
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> Iterable[np.ndarray]:
+        self.calls.append(list(texts))
+        if self._raises is not None:
+            raise self._raises
+        return [self._vector.copy() for _ in texts]
+
+
+def _envelope_id_for(conn: sqlite3.Connection, source_id: str) -> str:
+    (envelope_id,) = _fetch_one(
+        conn,
+        "SELECT id FROM content_envelopes WHERE source_id = ?",
+        (source_id,),
+    )
+    return envelope_id
+
+
+def test_embedder_provided_embeds_each_saved_envelope(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="hello world")
+
+    stub = _StubBackend()
+    stats = _run(scraper_db, classifier_conn, now=T0, embedder=Embedder(stub))
+
+    assert stats.embedded == 1
+    assert stats.embed_failed == 0
+    assert stats.embed_skipped_no_body == 0
+    envelope_id = _envelope_id_for(classifier_conn, "t-1")
+    assert EmbeddingRepo(classifier_conn).exists(envelope_id, MODEL_VERSION)
+
+
+def test_no_embedder_leaves_embed_counters_and_table_empty(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1")
+
+    stats = _run(scraper_db, classifier_conn, now=T0)
+
+    assert stats.embedded == 0
+    assert stats.embed_skipped_no_body == 0
+    assert stats.embed_failed == 0
+    assert _count(classifier_conn, "embeddings") == 0
+
+
+def test_empty_body_skips_embedding_without_failing(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="   ")
+
+    stub = _StubBackend()
+    stats = _run(scraper_db, classifier_conn, now=T0, embedder=Embedder(stub))
+
+    assert stats.embedded == 0
+    assert stats.embed_skipped_no_body == 1
+    assert stats.embed_failed == 0
+    assert stats.processed == 1
+    assert _count(classifier_conn, "embeddings") == 0
+    (status,) = _fetch_one(
+        classifier_conn,
+        "SELECT status FROM ingest_queue WHERE source_event_id = ?",
+        (1,),
+    )
+    assert status == "done"
+    assert stub.calls == []
+
+
+def test_embed_failure_leaves_queue_item_pending_but_envelope_saved(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="hello")
+
+    stub = _StubBackend(raises=RuntimeError("boom"))
+    stats = _run(scraper_db, classifier_conn, now=T0, embedder=Embedder(stub))
+
+    assert stats.embed_failed == 1
+    assert stats.embedded == 0
+    assert stats.processed == 1
+    assert EnvelopeRepo(classifier_conn).exists_by_source_id("t-1")
+    status, attempts = _fetch_one(
+        classifier_conn,
+        "SELECT status, attempts FROM ingest_queue WHERE source_event_id = ?",
+        (1,),
+    )
+    assert status == "pending"
+    assert attempts == 1
+    assert _count(classifier_conn, "embeddings") == 0
+
+
+def test_refresh_path_also_embeds(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    EnvelopeRepo(classifier_conn).save(_minimal_envelope("t-1", "existing-1"))
+    with _writer(scraper_db) as w:
+        _seed_tweet_event(w, tweet_id="t-1", event_type="record.enriched")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="refreshed body")
+
+    distinctive = np.arange(EMBEDDING_DIMENSION, dtype=np.float32)
+    stub = _StubBackend(vector=distinctive)
+    stats = _run(
+        scraper_db,
+        classifier_conn,
+        now=T0 + timedelta(seconds=5),
+        embedder=Embedder(stub),
+    )
+
+    assert stats.refreshed == 1
+    assert stats.embedded == 1
+    # The embedding is keyed by the *preserved* envelope id, not the
+    # per-observation UUID the mapper minted for this pass (ADR 007).
+    stored = EmbeddingRepo(classifier_conn).get("existing-1", MODEL_VERSION)
+    assert stored is not None
+    assert np.array_equal(stored.vector, distinctive)
+    assert _count(classifier_conn, "embeddings") == 1
+
+
+def test_per_envelope_run_row_is_written_with_causation(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    install_in_memory_exporter()
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="hello")
+
+    stub = _StubBackend()
+    _run(scraper_db, classifier_conn, now=T0, embedder=Embedder(stub))
+
+    ops = classifier_conn.execute(
+        "SELECT operation FROM runs ORDER BY operation"
+    ).fetchall()
+    assert [row[0] for row in ops] == ["embed", "ingest"]
+
+    envelope_id = _envelope_id_for(classifier_conn, "t-1")
+    (ingest_run_id,) = _fetch_one(
+        classifier_conn,
+        "SELECT id FROM runs WHERE operation = ?",
+        ("ingest",),
+    )
+    embed_envelope_id, embed_correlation, embed_causation = _fetch_one(
+        classifier_conn,
+        "SELECT envelope_id, correlation_id, causation_id "
+        "FROM runs WHERE operation = ?",
+        ("embed",),
+    )
+    assert embed_envelope_id == envelope_id
+    assert embed_correlation == envelope_id
+    assert embed_causation == ingest_run_id
+
+
+def test_embed_span_is_child_of_ingest_span(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    exporter = install_in_memory_exporter()
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="hello")
+
+    stub = _StubBackend()
+    _run(scraper_db, classifier_conn, now=T0, embedder=Embedder(stub))
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert set(spans) == {"ingest", "embed"}
+    ingest_span = spans["ingest"]
+    embed_span = spans["embed"]
+    assert embed_span.parent is not None
+    assert ingest_span.context is not None
+    assert embed_span.context is not None
+    assert embed_span.parent.span_id == ingest_span.context.span_id
+    assert embed_span.context.trace_id == ingest_span.context.trace_id
+    embed_attrs = dict(embed_span.attributes or {})
+    ingest_attrs = dict(ingest_span.attributes or {})
+    envelope_id = _envelope_id_for(classifier_conn, "t-1")
+    assert embed_attrs["prism.envelope_id"] == envelope_id
+    assert embed_attrs["prism.correlation_id"] == envelope_id
+    assert embed_attrs["prism.causation_id"] == ingest_attrs["prism.run_id"]
+
+
+def test_stub_backend_receives_envelope_body(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="full tweet body")
+
+    stub = _StubBackend()
+    _run(scraper_db, classifier_conn, now=T0, embedder=Embedder(stub))
+
+    assert stub.calls == [["full tweet body"]]

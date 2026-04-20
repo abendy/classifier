@@ -252,6 +252,37 @@ def test_refresh_by_source_id_raises_key_error_when_missing(
         repo.refresh_by_source_id(envelope)
 
 
+def test_refresh_returns_merged_envelope_with_preserved_identity(
+    conn: sqlite3.Connection,
+) -> None:
+    """Return value carries the preserved stored identity.id plus the
+    mapper-owned sections from the input — the shape callers need when
+    they key downstream state (embeddings, runs rows) by the stable
+    envelope id instead of the per-observation UUID the mapper mints.
+    """
+    repo = EnvelopeRepo(conn)
+    repo.save(ContentEnvelope.model_validate(_minimal_dict("env-orig", source_id="src-1")))
+
+    later = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+    incoming = ContentEnvelope.model_validate({
+        "identity": {"id": "env-transient"},
+        "source": {"service": "x-sync", "sourceId": "src-1", "ingestedAt": later},
+        "content": {"type": "post", "body": "updated body"},
+        "system": {"version": "1.0.0", "createdAt": later, "updatedAt": later},
+    })
+    merged = repo.refresh_by_source_id(incoming)
+
+    assert merged.identity.id == "env-orig"
+    assert merged.system.created_at == TS
+    assert merged.system.updated_at == later
+    assert merged.source.ingested_at == later
+    assert merged.content.body == "updated body"
+    # The returned envelope matches what was actually persisted.
+    stored = repo.get("env-orig")
+    assert stored is not None
+    assert stored.model_dump(mode="json") == merged.model_dump(mode="json")
+
+
 def test_refresh_updates_ingested_at_column(conn: sqlite3.Connection) -> None:
     repo = EnvelopeRepo(conn)
     repo.save(ContentEnvelope.model_validate(_minimal_dict("env-1", source_id="src-1")))

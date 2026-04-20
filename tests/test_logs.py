@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from opentelemetry import context as otel_context
+from opentelemetry import trace
+from opentelemetry.trace import (
+    NonRecordingSpan,
+    SpanContext,
+    TraceFlags,
+    set_span_in_context,
+)
+
 from prism.logs import log_event
+from prism.tracing import install_in_memory_exporter
 
 if TYPE_CHECKING:
     import pytest
@@ -79,3 +90,67 @@ def test_log_event_serializes_nested_structures(
     err = capsys.readouterr().err
     lines = _parse(err)
     assert lines[0]["payload"] == {"n": 3, "items": [1, 2, 3]}
+
+
+def test_log_event_always_injects_service_prism(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_event("x.y", a=1)
+    err = capsys.readouterr().err
+    lines = _parse(err)
+    assert lines[0]["service"] == "prism"
+
+
+def test_log_event_inside_active_span_injects_trace_and_span_id(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install_in_memory_exporter()
+    tracer = trace.get_tracer("prism")
+    with tracer.start_as_current_span("outer"):
+        log_event("in.span")
+    err = capsys.readouterr().err
+    line = _parse(err)[0]
+    assert re.fullmatch(r"[0-9a-f]{32}", line["trace_id"])
+    assert re.fullmatch(r"[0-9a-f]{16}", line["span_id"])
+
+
+def test_log_event_outside_a_span_omits_trace_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install_in_memory_exporter()
+    log_event("no.span")
+    err = capsys.readouterr().err
+    line = _parse(err)[0]
+    assert "trace_id" not in line
+    assert "span_id" not in line
+
+
+def test_log_event_caller_kwargs_override_defaults(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    log_event("x", service="other")
+    err = capsys.readouterr().err
+    line = _parse(err)[0]
+    assert line["service"] == "other"
+
+
+def test_log_event_non_recording_span_omits_trace_fields(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Valid-but-non-recording context (remote propagation, unsampled branch):
+    # must not trigger local trace injection.
+    install_in_memory_exporter()
+    ctx = SpanContext(
+        trace_id=0xABCD_1234_ABCD_1234_ABCD_1234_ABCD_1234,
+        span_id=0x1234_5678_90AB_CDEF,
+        is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    token = otel_context.attach(set_span_in_context(NonRecordingSpan(ctx)))
+    try:
+        log_event("carry")
+    finally:
+        otel_context.detach(token)
+    line = _parse(capsys.readouterr().err)[0]
+    assert "trace_id" not in line
+    assert "span_id" not in line

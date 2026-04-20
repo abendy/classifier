@@ -14,3 +14,6 @@ the replacement, but the body of the old ADR is not rewritten.
 | 005 | Advance the outbox polling cursor independently of parse success | Accepted | 2026-04-19 |
 | 006 | The scraper-classifier bridge — scope, contract, retirement | Accepted | 2026-04-19 |
 | 007 | Envelope refresh preserves identity.id and system.created_at | Accepted | 2026-04-19 |
+| 008 | Bypass OTel's one-shot set_tracer_provider for reconfiguration | Accepted | 2026-04-19 |
+| 009 | Terminal log events fire after the operation's span closes, with trace_id threaded explicitly | Accepted | 2026-04-19 |
+| 010 | Two-layer exception handling with identity-based deduplication in `operation()` | Accepted | 2026-04-19 |

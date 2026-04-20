@@ -11,13 +11,19 @@ from uuid import UUID
 import pytest
 from alembic import command
 from alembic.config import Config
+from opentelemetry.trace.status import StatusCode
 
 from prism.audit import OperationContext, RunRepo, operation
 from prism.db import connect_sqlite
+from prism.tracing import install_in_memory_exporter
 
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Iterator
+
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
 
 
 T0 = datetime(2026, 4, 19, 12, 0, tzinfo=UTC)
@@ -338,3 +344,159 @@ def test_operation_context_exposes_run_id_and_name(
         assert op.name == "classify"
         assert op.run_id
         assert len(op.run_id) >= 32
+
+
+@pytest.fixture
+def exporter() -> InMemorySpanExporter:
+    """Install a fresh in-memory span exporter; return it for assertions."""
+    return install_in_memory_exporter()
+
+
+def test_operation_emits_span_with_operation_name(
+    conn: sqlite3.Connection, exporter: InMemorySpanExporter
+) -> None:
+    repo = RunRepo(conn)
+    with operation("ingest", repo=repo):
+        pass
+    spans = exporter.get_finished_spans()
+    assert [s.name for s in spans] == ["ingest"]
+
+
+def test_operation_span_carries_prism_attributes(
+    conn: sqlite3.Connection, exporter: InMemorySpanExporter
+) -> None:
+    repo = RunRepo(conn)
+    with operation(
+        "classify",
+        repo=repo,
+        envelope_id="env-1",
+        correlation_id="corr-1",
+        causation_id="cause-1",
+    ) as op:
+        pass
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes or {})
+    assert attrs["prism.operation"] == "classify"
+    assert attrs["prism.run_id"] == op.run_id
+    assert attrs["prism.envelope_id"] == "env-1"
+    assert attrs["prism.correlation_id"] == "corr-1"
+    assert attrs["prism.causation_id"] == "cause-1"
+
+
+def test_operation_populates_trace_id_on_runs_row(
+    conn: sqlite3.Connection, exporter: InMemorySpanExporter
+) -> None:
+    repo = RunRepo(conn)
+    with operation("x", repo=repo) as op:
+        pass
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].context is not None
+    expected = format(spans[0].context.trace_id, "032x")
+    row = _fetch_run(conn, op.run_id)
+    assert row["trace_id"] == expected
+    assert len(row["trace_id"]) == 32
+
+
+def test_operation_exception_marks_span_error_and_records(
+    conn: sqlite3.Connection, exporter: InMemorySpanExporter
+) -> None:
+    repo = RunRepo(conn)
+    with pytest.raises(RuntimeError, match="boom"), operation("x", repo=repo):
+        raise RuntimeError("boom")
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert "RuntimeError" in (span.status.description or "")
+    exc_events = [e for e in span.events if e.name == "exception"]
+    assert len(exc_events) == 1
+
+
+def test_nested_operation_produces_parent_child_spans(
+    conn: sqlite3.Connection, exporter: InMemorySpanExporter
+) -> None:
+    repo = RunRepo(conn)
+    with operation("outer", repo=repo), operation("inner", repo=repo):
+        pass
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    assert set(spans) == {"outer", "inner"}
+    outer_span = spans["outer"]
+    inner_span = spans["inner"]
+    assert outer_span.parent is None
+    assert inner_span.parent is not None
+    assert outer_span.context is not None
+    assert inner_span.context is not None
+    assert inner_span.parent.span_id == outer_span.context.span_id
+    assert inner_span.context.trace_id == outer_span.context.trace_id
+
+
+def test_set_correlation_mid_op_mirrors_to_span_attribute(
+    conn: sqlite3.Connection, exporter: InMemorySpanExporter
+) -> None:
+    repo = RunRepo(conn)
+    with operation("x", repo=repo) as op:
+        op.set_correlation(envelope_id="env-1")
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    attrs = dict(spans[0].attributes or {})
+    assert attrs["prism.envelope_id"] == "env-1"
+
+
+def test_operation_marks_span_error_when_audit_persistence_raises(
+    conn: sqlite3.Connection,
+    exporter: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # record_success failing mid-operation would otherwise leave the span
+    # UNSET — we want the trace to show the audit-layer failure, not go
+    # quiet when the very component responsible for persistence breaks.
+    repo = RunRepo(conn)
+
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("audit-db down")
+
+    monkeypatch.setattr(repo, "record_success", boom)
+    with pytest.raises(RuntimeError, match="audit-db down"), operation("x", repo=repo):
+        pass
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert "audit-db down" in (span.status.description or "")
+    exc_events = [e for e in span.events if e.name == "exception"]
+    assert len(exc_events) == 1
+
+
+def test_operation_records_both_exceptions_when_record_error_also_fails(
+    conn: sqlite3.Connection,
+    exporter: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # User-block raises, then record_error itself raises. The propagated
+    # exception is the record_error failure (last-raised), but the span
+    # must surface BOTH: status description stays on the primary user
+    # cause, and a second exception event logs the persistence failure
+    # so the trace doesn't hide the audit-layer breakage.
+    repo = RunRepo(conn)
+
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("record_error boom")
+
+    monkeypatch.setattr(repo, "record_error", boom)
+    with pytest.raises(RuntimeError, match="record_error boom"), operation(
+        "x", repo=repo
+    ):
+        raise ValueError("user boom")
+
+    spans = exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert "ValueError" in (span.status.description or "")
+    exc_events = [e for e in span.events if e.name == "exception"]
+    assert len(exc_events) == 2
+    types = [e.attributes.get("exception.type") for e in exc_events if e.attributes]
+    assert "ValueError" in types
+    assert "RuntimeError" in types

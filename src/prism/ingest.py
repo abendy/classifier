@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
+
+from opentelemetry import trace
 
 from prism.audit import RunRepo, operation
 from prism.envelope_repo import EnvelopeRepo
@@ -55,9 +58,16 @@ def ingest_once(
     outbox = ScraperOutboxReader(scraper_conn)
     run_repo = RunRepo(classifier_conn)
 
+    started_monotonic = time.monotonic()
     with operation("ingest", repo=run_repo) as op:
         run_id = op.run_id
-        log_event("ingest.start", run_id=run_id)
+        # Capture the trace id while the operation span is current so the
+        # post-block ingest.done event can reference it explicitly; log_event
+        # auto-injects trace_id only inside a recording span, and ingest.done
+        # fires after the span has closed (see "no log on error" below).
+        span_ctx = trace.get_current_span().get_span_context()
+        trace_id = format(span_ctx.trace_id, "032x") if span_ctx.is_valid else None
+        log_event("ingest.start", run_id=run_id, operation="ingest")
         observed, malformed = _poll(
             outbox, queue_repo, sync_repo, envelope_repo, poll_limit, now
         )
@@ -74,10 +84,21 @@ def ingest_once(
             malformed=malformed,
         )
         op.attach_outputs(asdict(stats))
+    duration_ms = int((time.monotonic() - started_monotonic) * 1000)
     # Only after the run is durably marked success does the terminal
     # event fire — a failed record_success would raise above, and
     # the "no log on error" rule leaves no success-shaped line behind.
-    log_event("ingest.done", run_id=run_id, **asdict(stats))
+    # When tracing isn't configured, trace_id is None; omit the key
+    # entirely rather than emit a null sentinel field.
+    trace_fields = {"trace_id": trace_id} if trace_id is not None else {}
+    log_event(
+        "ingest.done",
+        run_id=run_id,
+        operation="ingest",
+        duration_ms=duration_ms,
+        **trace_fields,
+        **asdict(stats),
+    )
     return stats
 
 

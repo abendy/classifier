@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import sqlite3
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -20,6 +21,7 @@ from prism.ingest import CURSOR_NAME, IngestStats, ingest_once
 from prism.ingest_queue import IngestQueueRepo
 from prism.scraper_mapper import open_scraper_readonly
 from prism.sync_state import SyncStateRepo
+from prism.tracing import install_in_memory_exporter
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -502,3 +504,66 @@ def test_ingest_once_emits_start_and_done_log_events(
     assert events[0]["run_id"] == events[1]["run_id"]
     for key in asdict(stats):
         assert events[1][key] == getattr(stats, key)
+
+
+def test_ingest_once_omits_trace_id_when_tracing_unconfigured(
+    scraper_db: Path,
+    classifier_conn: sqlite3.Connection,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # When no provider is installed, "everything else works identically"
+    # per the tracing slice contract: the ingest.start/done log events
+    # are emitted, but trace_id is absent (not null) since there's no
+    # recording span to source it from.
+    import opentelemetry.trace as _trace_api
+
+    monkeypatch.setattr(_trace_api, "_TRACER_PROVIDER", None)
+
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1")
+
+    _run(scraper_db, classifier_conn, now=T0)
+
+    err = capsys.readouterr().err
+    events = [json.loads(line) for line in err.splitlines() if line]
+    assert [e["event"] for e in events] == ["ingest.start", "ingest.done"]
+    for event in events:
+        assert "trace_id" not in event
+        assert "span_id" not in event
+
+
+def test_ingest_once_populates_trace_id_and_canonical_log_fields(
+    scraper_db: Path,
+    classifier_conn: sqlite3.Connection,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    install_in_memory_exporter()
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1")
+
+    _run(scraper_db, classifier_conn, now=T0)
+
+    (trace_id,) = _fetch_one(
+        classifier_conn,
+        "SELECT trace_id FROM runs WHERE operation = ?",
+        ("ingest",),
+    )
+    assert re.fullmatch(r"[0-9a-f]{32}", trace_id)
+
+    err = capsys.readouterr().err
+    events = [json.loads(line) for line in err.splitlines() if line]
+    assert [e["event"] for e in events] == ["ingest.start", "ingest.done"]
+    for event in events:
+        assert event["service"] == "prism"
+        assert event["operation"] == "ingest"
+        assert event["trace_id"] == trace_id
+    # ingest.start is auto-injected via the active span; ingest.done fires
+    # after record_success so its trace_id is threaded explicitly from the
+    # operation context (same trace_id either way — the spec's "canonical
+    # log shape" on a per-operation basis).
+    assert isinstance(events[1]["duration_ms"], int)

@@ -29,3 +29,26 @@ model choices, and thresholds are the values most likely to need
 tuning. If you change a value that belongs to every environment,
 update `config.example.yaml` and commit that — never commit
 `config.yaml` directly.
+
+## Running the service
+
+`prism serve` starts the HTTP API and a background ingest loop
+that polls the scraper outbox every `ingest.poll_interval_ms`.
+Each pass saves or refreshes envelopes, embeds their bodies, and
+records per-envelope runs in `runs` for Phoenix. Set
+`ingest.embedding_enabled: false` to skip embedding (and the
+~2 GB BGE-M3 model download) for smoke runs.
+
+### Phoenix (optional trace viewer)
+
+Set `audit.phoenix.enabled: true` in `config.yaml`, then run
+Phoenix locally:
+
+```bash
+docker run -p 6006:6006 arizephoenix/phoenix:latest
+```
+
+Open <http://localhost:6006> to see ingest and per-envelope
+embed spans threaded by `correlationId` (stable envelope id)
+and `causationId` (parent run). Set `enabled: false` to skip —
+`runs` rows still populate; only the Phoenix export is suppressed.

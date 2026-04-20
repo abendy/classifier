@@ -21,3 +21,5 @@ the replacement, but the body of the old ADR is not rewritten.
 | 012 | DELETE-then-INSERT as upsert for vec0 virtual tables | Accepted | 2026-04-20 |
 | 013 | Thread both correlation_id and causation_id on per-envelope operation spans | Accepted | 2026-04-20 |
 | 014 | Mutating repo methods return the canonical post-mutation state | Accepted | 2026-04-20 |
+| 015 | Import heavyweight lifespan-owned subsystems lazily inside the lifespan body | Accepted | 2026-04-20 |
+| 016 | Serve-time long-lived loops own no span | Accepted | 2026-04-20 |

@@ -54,6 +54,7 @@ class IngestConfig(_Base):
     source: str
     scraper_db_path: _Path
     poll_interval_ms: int
+    embedding_enabled: bool = True
 
 
 class PhoenixConfig(_Base):

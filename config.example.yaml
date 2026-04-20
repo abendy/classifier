@@ -45,6 +45,10 @@ ingest:
   # layout — this is the most likely value to change per environment.
   scraper_db_path: ../x-bookmarks-scraper/bookmarks.db
   poll_interval_ms: 1000
+  # Run embedding inline during ingest. Set false to run serve
+  # without the fastembed model download (e.g., pre-model smoke
+  # tests). The model is ~2 GB on first load.
+  embedding_enabled: true
 
 # ── Audit ──────────────────────────────────────────────────────────
 audit:

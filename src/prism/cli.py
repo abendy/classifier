@@ -66,6 +66,7 @@ def config() -> None:
     table.add_row("Embedding model", loaded.pipeline.embedding.model)
     table.add_row("Topic model", loaded.pipeline.topic.model)
     table.add_row("Ingest source", loaded.ingest.source)
+    table.add_row("Embedding enabled", str(loaded.ingest.embedding_enabled))
     table.add_row("SQLite path", str(loaded.storage.sqlite_path))
     table.add_row("Phoenix enabled", str(loaded.audit.phoenix.enabled))
     Console().print(table)

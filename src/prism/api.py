@@ -11,11 +11,12 @@ from fastapi.responses import JSONResponse
 from prism import __version__
 from prism.config import CONFIG_PATH, load_config
 from prism.db import attach_duckdb, connect_sqlite, migration_head
+from prism.serve import lifespan
 
 if TYPE_CHECKING:
     from prism.config import StorageConfig
 
-app = FastAPI(title="prism", version=__version__)
+app = FastAPI(title="prism", version=__version__, lifespan=lifespan)
 
 
 def _check_health(storage: StorageConfig) -> tuple[dict[str, Any], int]:

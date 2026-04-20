@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 
 def connect_sqlite(path: Path, *, load_vec: bool) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    # check_same_thread=False lets the serve loop hand the connection
+    # to asyncio.to_thread. Single-task loop + single worker-thread per
+    # iteration means no concurrent access, so the default thread
+    # affinity guard adds no safety — only a ProgrammingError.
+    conn = sqlite3.connect(path, check_same_thread=False)
     mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
     if mode != "wal":
         conn.close()

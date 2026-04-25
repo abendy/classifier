@@ -45,6 +45,7 @@ verification without booting uvicorn.
 | `prism dev ingest-once [--no-embed]` | Run one `ingest_once` pass against the configured DBs and print stats. |
 | `prism dev embed "<text>"` | Boot the default embedder, embed once, print model + first 8 vector components. |
 | `prism dev load-topics [--catalog P]` | Embed the topic catalog (`topics.yaml`) into `topic_prototypes`. Run after editing the catalog. |
+| `prism dev retrieve-topics <envelope-id> [--top-k N]` | Retrieve top-k topic candidates for an envelope's stored embedding. |
 
 Typical first-run loop on a fresh checkout:
 

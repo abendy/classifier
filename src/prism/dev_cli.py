@@ -265,6 +265,70 @@ def load_topics_cmd(
     Console().print(table)
 
 
+@dev_app.command("retrieve-topics")
+def retrieve_topics_cmd(
+    envelope_id: Annotated[
+        str,
+        typer.Argument(help="Envelope id whose embedding seeds retrieval."),
+    ],
+    top_k: Annotated[
+        int,
+        typer.Option(
+            "--top-k",
+            min=1,
+            help="Number of topic candidates to return.",
+        ),
+    ] = 5,
+) -> None:
+    """Retrieve top-k topic candidates for an envelope."""
+    cfg = load_config(CONFIG_PATH)
+    classifier_conn = connect_sqlite(
+        cfg.storage.sqlite_path, load_vec=cfg.storage.sqlite_vec
+    )
+    try:
+        from prism.embedding import MODEL_VERSION
+        from prism.embedding_repo import EmbeddingRepo
+        from prism.topic_prototype_repo import TopicPrototypeRepo
+        from prism.topic_retrieval import retrieve_top_k_for_envelope
+
+        candidates = retrieve_top_k_for_envelope(
+            envelope_id,
+            embedding_repo=EmbeddingRepo(classifier_conn),
+            topic_repo=TopicPrototypeRepo(classifier_conn),
+            model_version=MODEL_VERSION,
+            k=top_k,
+        )
+    finally:
+        classifier_conn.close()
+
+    if not candidates:
+        typer.echo(
+            f"no topic candidates returned for envelope {envelope_id!r} "
+            f"under model_version={MODEL_VERSION!r}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    table = Table()
+    table.add_column("Rank", justify="right")
+    table.add_column("Topic", overflow="fold")
+    table.add_column("Score", justify="right")
+    table.add_column("Best exemplar idx", justify="right")
+    table.add_column("Best exemplar text", overflow="fold")
+    for rank, candidate in enumerate(candidates, start=1):
+        snippet = candidate.best_exemplar_text
+        if len(snippet) > 80:
+            snippet = snippet[:77] + "..."
+        table.add_row(
+            str(rank),
+            candidate.topic_id,
+            f"{candidate.score:+.4f}",
+            str(candidate.best_exemplar_idx),
+            snippet,
+        )
+    Console().print(table)
+
+
 def _latest_ingest_run_id(conn: sqlite3.Connection) -> str | None:
     cursor = conn.execute(
         "SELECT id FROM runs WHERE operation = 'ingest' "

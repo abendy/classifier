@@ -124,6 +124,52 @@ def test_count_filters_by_model_version(conn: sqlite3.Connection) -> None:
     assert repo.count("model@2") == 2
 
 
+def test_list_vectors_for_model_filters_by_model_version(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = TopicPrototypeRepo(conn)
+    repo.save_many(
+        [
+            _row("history", 0, model_version="model@1"),
+            _row("science", 0, model_version="model@2"),
+            _row("science", 1, model_version="model@2"),
+        ]
+    )
+
+    rows = repo.list_vectors_for_model("model@2")
+
+    assert {(row.topic_id, row.exemplar_idx) for row in rows} == {
+        ("science", 0),
+        ("science", 1),
+    }
+    assert {row.model_version for row in rows} == {"model@2"}
+
+
+def test_list_vectors_for_model_round_trips_vector_bytes(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = TopicPrototypeRepo(conn)
+    vector = np.arange(EMBEDDING_DIMENSION, dtype=np.float32)
+    repo.save_many(
+        [
+            TopicPrototypeRow(
+                topic_id="history",
+                exemplar_idx=0,
+                text="known vector",
+                model_version="model@1",
+                vector=vector,
+                created_at=TS,
+            )
+        ]
+    )
+
+    rows = repo.list_vectors_for_model("model@1")
+
+    assert len(rows) == 1
+    assert rows[0].vector.shape == (EMBEDDING_DIMENSION,)
+    assert rows[0].vector.tobytes() == vector.tobytes()
+
+
 def test_save_many_rejects_row_key_delimiter_inputs(
     conn: sqlite3.Connection,
 ) -> None:

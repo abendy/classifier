@@ -33,6 +33,15 @@ class TopicPrototypeRow:
     created_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class StoredTopicPrototype:
+    topic_id: str
+    exemplar_idx: int
+    text: str
+    model_version: str
+    vector: np.ndarray
+
+
 def _row_key(topic_id: str, exemplar_idx: int, model_version: str) -> str:
     if _ROW_KEY_DELIMITER in topic_id:
         raise ValueError(f"topic_id contains delimiter: {topic_id!r}")
@@ -106,3 +115,31 @@ class TopicPrototypeRepo:
         finally:
             cursor.close()
         return 0 if row is None else int(row[0])
+
+    def list_vectors_for_model(
+        self, model_version: str
+    ) -> list[StoredTopicPrototype]:
+        """Return every prototype for ``model_version``."""
+        cursor = self._conn.execute(
+            "SELECT topic_id, exemplar_idx, text, embedding "
+            "FROM topic_prototypes WHERE model_version = ?",
+            (model_version,),
+        )
+        try:
+            raw = cursor.fetchall()
+        finally:
+            cursor.close()
+
+        out: list[StoredTopicPrototype] = []
+        for row in raw:
+            vector = np.frombuffer(row[3], dtype=np.float32)
+            out.append(
+                StoredTopicPrototype(
+                    topic_id=str(row[0]),
+                    exemplar_idx=int(row[1]),
+                    text=str(row[2]),
+                    model_version=model_version,
+                    vector=vector,
+                )
+            )
+        return out

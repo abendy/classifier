@@ -12,8 +12,11 @@ from alembic.config import Config as AlembicConfig
 from typer.testing import CliRunner
 
 from prism.config import Config
+from prism.db import connect_sqlite
 from prism.dev_cli import dev_app
-from prism.embedding import Embedder
+from prism.embedding import EMBEDDING_DIMENSION, MODEL_VERSION, Embedder
+from prism.embedding_repo import EmbeddingRepo
+from prism.topic_prototype_repo import TopicPrototypeRepo, TopicPrototypeRow
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -260,3 +263,48 @@ topics:
     assert "Catalog version" in result.output
     assert "Topics processed" in result.output
     assert "Prototypes written" in result.output
+
+
+def test_retrieve_topics_runs_against_seeded_tmp_db(
+    tmp_path: Path,
+    classifier_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    envelope_id = "env-retrieve-1"
+    vector = np.ones(EMBEDDING_DIMENSION, dtype=np.float32)
+    conn = connect_sqlite(classifier_db, load_vec=True)
+    try:
+        EmbeddingRepo(conn).save(
+            envelope_id=envelope_id,
+            model_version=MODEL_VERSION,
+            vector=vector,
+        )
+        TopicPrototypeRepo(conn).save_many(
+            [
+                TopicPrototypeRow(
+                    topic_id="history",
+                    exemplar_idx=0,
+                    text="Historical interpretation and archival context.",
+                    model_version=MODEL_VERSION,
+                    vector=vector,
+                )
+            ]
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    scraper_db = tmp_path / "scraper.db"
+    monkeypatch.setattr(
+        "prism.dev_cli.load_config",
+        lambda _path: _make_config(scraper_db, classifier_db, sqlite_vec=True),
+    )
+
+    result = runner.invoke(
+        dev_app,
+        ["retrieve-topics", envelope_id, "--top-k", "1"],
+    )
+
+    assert result.exit_code == 0
+    assert "Rank" in result.output
+    assert "history" in result.output

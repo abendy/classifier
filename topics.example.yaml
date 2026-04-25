@@ -1,0 +1,49 @@
+version: "2026.04.1"
+topics:
+  - id: history
+    name: History
+    description: |
+      Historical content -- events, periods, biographies, and
+      analysis across any era. Includes military, political,
+      scientific, and cultural history.
+    exemplars:
+      - "World War II Pacific theater operations and key engagements"
+      - "The fall of the Roman Empire and its causes"
+      - "Napoleon's military campaigns across Europe"
+    subtopics:
+      - id: history-ww2-pacific
+        name: WW2 Pacific
+        description: |
+          Pacific theater of World War II -- operations,
+          battles, leadership, and the war's end.
+        exemplars:
+          - "Pearl Harbor attack and the U.S. entry into the war"
+          - "Battle of Midway and its strategic significance"
+      - id: history-rome
+        name: Roman Empire
+        description: |
+          The Roman Republic and Empire -- politics, military,
+          society, and decline.
+        exemplars:
+          - "The reforms of Augustus and the Principate"
+          - "The crisis of the third century"
+
+  - id: technology
+    name: Technology
+    description: |
+      Software, hardware, networking, and emerging technology.
+      Spans languages, systems, infrastructure, and tools.
+    exemplars:
+      - "Rust's ownership model and its applications in systems programming"
+      - "Distributed consensus algorithms like Raft and Paxos"
+      - "Container orchestration with Kubernetes"
+
+  - id: science
+    name: Science
+    description: |
+      Scientific research, methodology, and findings across
+      physics, biology, chemistry, and the earth sciences.
+    exemplars:
+      - "Recent results in particle physics from the LHC"
+      - "CRISPR gene editing and its therapeutic applications"
+      - "Climate model uncertainty and projection methodology"

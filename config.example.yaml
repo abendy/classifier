@@ -29,6 +29,10 @@ pipeline:
     confidence_threshold: 0.55
     # Number of topic prototypes to retrieve before the LLM pick.
     retrieval_top_k: 5
+    # Path to the curated topic catalog. Copy topics.example.yaml
+    # to this path and edit. Reembed by running:
+    #   uv run prism dev load-topics
+    catalog_path: topics.yaml
   tags:
     model: qwen2.5-7b-instruct
     max_tags: 6

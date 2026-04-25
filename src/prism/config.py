@@ -32,6 +32,7 @@ class TopicConfig(_Base):
     quantization: str
     confidence_threshold: float
     retrieval_top_k: int
+    catalog_path: _Path = Path("topics.yaml")
 
 
 class TagsConfig(_Base):

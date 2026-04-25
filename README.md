@@ -44,6 +44,7 @@ verification without booting uvicorn.
 | `prism dev seed-scraper [--path P] [--rows N] [--force]` | Write the scraper's four-table DDL plus N synthetic bookmark rows. |
 | `prism dev ingest-once [--no-embed]` | Run one `ingest_once` pass against the configured DBs and print stats. |
 | `prism dev embed "<text>"` | Boot the default embedder, embed once, print model + first 8 vector components. |
+| `prism dev load-topics [--catalog P]` | Embed the topic catalog (`topics.yaml`) into `topic_prototypes`. Run after editing the catalog. |
 
 Typical first-run loop on a fresh checkout:
 
@@ -51,6 +52,20 @@ Typical first-run loop on a fresh checkout:
 uv run prism dev seed-scraper --rows 3
 uv run prism dev ingest-once
 ```
+
+### Topic catalog
+
+The classifier reads its topic catalog from
+`pipeline.topic.catalog_path` (default `topics.yaml`). On a fresh
+checkout copy the example file:
+
+```bash
+cp topics.example.yaml topics.yaml
+uv run prism dev load-topics
+```
+
+The example ships with three topics so the loader can be exercised
+end-to-end before curation begins.
 
 Edit `config.yaml` to match your environment — the scraper DB path,
 model choices, and thresholds are the values most likely to need

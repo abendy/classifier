@@ -213,6 +213,58 @@ def embed_cmd(
     Console().print(table)
 
 
+@dev_app.command("load-topics")
+def load_topics_cmd(
+    catalog: Annotated[
+        str | None,
+        typer.Option(
+            "--catalog",
+            help="YAML catalog path. Defaults to pipeline.topic.catalog_path.",
+        ),
+    ] = None,
+) -> None:
+    """Embed every prototype in the topic catalog and persist."""
+    cfg = load_config(CONFIG_PATH)
+    catalog_path = (
+        pathlib.Path(catalog)
+        if catalog is not None
+        else cfg.pipeline.topic.catalog_path
+    )
+
+    from prism.embedding import MODEL_VERSION, create_default_embedder
+    from prism.topic_catalog import load_catalog
+    from prism.topic_loader import embed_catalog
+    from prism.topic_prototype_repo import TopicPrototypeRepo
+
+    parsed = load_catalog(catalog_path)
+    embedder = create_default_embedder()
+    classifier_conn = connect_sqlite(
+        cfg.storage.sqlite_path, load_vec=cfg.storage.sqlite_vec
+    )
+    try:
+        repo = TopicPrototypeRepo(classifier_conn)
+        summary = embed_catalog(
+            parsed, embedder=embedder, repo=repo, model_version=MODEL_VERSION
+        )
+        classifier_conn.commit()
+        total = repo.count(MODEL_VERSION)
+    except Exception:
+        classifier_conn.rollback()
+        raise
+    finally:
+        classifier_conn.close()
+
+    table = Table(show_header=False)
+    table.add_column("Field")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Catalog version", summary.catalog_version)
+    table.add_row("Model version", summary.model_version)
+    table.add_row("Topics processed", str(summary.topics_processed))
+    table.add_row("Prototypes written", str(summary.prototypes_written))
+    table.add_row("Total prototypes (this model)", str(total))
+    Console().print(table)
+
+
 def _latest_ingest_run_id(conn: sqlite3.Connection) -> str | None:
     cursor = conn.execute(
         "SELECT id FROM runs WHERE operation = 'ingest' "

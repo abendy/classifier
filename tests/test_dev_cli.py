@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from prism.config import Config
 from prism.dev_cli import dev_app
+from prism.embedding import Embedder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -22,7 +23,21 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 
-def _make_config(scraper_db: Path, classifier_db: Path) -> Config:
+def _make_config(
+    scraper_db: Path,
+    classifier_db: Path,
+    *,
+    catalog_path: Path | None = None,
+    sqlite_vec: bool = False,
+) -> Config:
+    topic_config = {
+        "model": "qwen2.5-7b-instruct",
+        "quantization": "q4_k_m",
+        "confidence_threshold": 0.55,
+        "retrieval_top_k": 5,
+    }
+    if catalog_path is not None:
+        topic_config["catalog_path"] = str(catalog_path)
     return Config.model_validate(
         {
             "service": {
@@ -31,12 +46,7 @@ def _make_config(scraper_db: Path, classifier_db: Path) -> Config:
             },
             "pipeline": {
                 "embedding": {"model": "bge-large-en", "version": "1.5"},
-                "topic": {
-                    "model": "qwen2.5-7b-instruct",
-                    "quantization": "q4_k_m",
-                    "confidence_threshold": 0.55,
-                    "retrieval_top_k": 5,
-                },
+                "topic": topic_config,
                 "tags": {"model": "qwen2.5-7b-instruct", "max_tags": 6},
                 "sentiment_intent": {"bundled_with": "tags"},
             },
@@ -52,7 +62,7 @@ def _make_config(scraper_db: Path, classifier_db: Path) -> Config:
             },
             "storage": {
                 "sqlite_path": classifier_db,
-                "sqlite_vec": False,
+                "sqlite_vec": sqlite_vec,
                 "duckdb_attach": False,
             },
             "jobs": {
@@ -208,3 +218,45 @@ def test_embed_empty_text_exits_with_error() -> None:
 
     assert result.exit_code == 1
     assert "empty input" in result.stderr
+
+
+def test_load_topics_runs_against_tmp_catalog(
+    tmp_path: Path,
+    classifier_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeBackend:
+        def embed(self, texts: list[str]) -> list[np.ndarray[Any, np.dtype[np.float32]]]:
+            return [np.ones(1024, dtype=np.float32) for _text in texts]
+
+    catalog = tmp_path / "topics.yaml"
+    catalog.write_text(
+        """
+version: "topics@test"
+topics:
+  - id: history
+    name: History
+    description: Historical analysis.
+    exemplars:
+      - "Roman history"
+""".strip(),
+        encoding="utf-8",
+    )
+    scraper_db = tmp_path / "scraper.db"
+    monkeypatch.setattr(
+        "prism.dev_cli.load_config",
+        lambda _path: _make_config(
+            scraper_db, classifier_db, catalog_path=catalog, sqlite_vec=True
+        ),
+    )
+    monkeypatch.setattr(
+        "prism.embedding.create_default_embedder",
+        lambda: Embedder(FakeBackend()),
+    )
+
+    result = runner.invoke(dev_app, ["load-topics"])
+
+    assert result.exit_code == 0
+    assert "Catalog version" in result.output
+    assert "Topics processed" in result.output
+    assert "Prototypes written" in result.output

@@ -39,3 +39,4 @@ data/
 
 # Local config (copy from config.example.yaml)
 config.yaml
+topics.yaml

@@ -26,3 +26,4 @@ the replacement, but the body of the old ADR is not rewritten.
 | 017 | Use BAAI/bge-large-en-v1.5 as the default dense embedder | Accepted | 2026-04-25 |
 | 018 | Python full-scan cosine for topic-prototype retrieval | Accepted | 2026-04-25 |
 | 019 | Ollama as the default local LLM backend | Accepted | 2026-04-25 |
+| 020 | Typed columns for the events outbox table | Accepted | 2026-04-25 |

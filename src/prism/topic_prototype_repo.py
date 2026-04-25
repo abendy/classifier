@@ -116,6 +116,26 @@ class TopicPrototypeRepo:
             cursor.close()
         return 0 if row is None else int(row[0])
 
+    def get_descriptions(
+        self, topic_ids: Iterable[str], model_version: str
+    ) -> dict[str, str]:
+        """Return ``{topic_id: description}`` for named topics and model."""
+        topic_ids = list(topic_ids)
+        if not topic_ids:
+            return {}
+        placeholders = ",".join(["?"] * len(topic_ids))
+        cursor = self._conn.execute(
+            "SELECT topic_id, text FROM topic_prototypes "
+            "WHERE model_version = ? AND exemplar_idx = 0 "
+            f"AND topic_id IN ({placeholders})",
+            (model_version, *topic_ids),
+        )
+        try:
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+        return {str(row[0]): str(row[1]) for row in rows}
+
     def list_vectors_for_model(
         self, model_version: str
     ) -> list[StoredTopicPrototype]:

@@ -33,6 +33,12 @@ pipeline:
     # to this path and edit. Reembed by running:
     #   uv run prism dev load-topics
     catalog_path: topics.yaml
+    # Ollama daemon URL and model tag for the LLM pick step.
+    # Override per environment if Ollama runs elsewhere or a
+    # different model is preferred. Pull the model first:
+    #   ollama pull qwen2.5:7b-instruct-q4_K_M
+    ollama_url: http://localhost:11434
+    ollama_model: qwen2.5:7b-instruct-q4_K_M
   tags:
     model: qwen2.5-7b-instruct
     max_tags: 6

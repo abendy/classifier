@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -16,6 +17,8 @@ from prism.db import connect_sqlite
 from prism.dev_cli import dev_app
 from prism.embedding import EMBEDDING_DIMENSION, MODEL_VERSION, Embedder
 from prism.embedding_repo import EmbeddingRepo
+from prism.envelope import ContentEnvelope
+from prism.envelope_repo import EnvelopeRepo
 from prism.topic_prototype_repo import TopicPrototypeRepo, TopicPrototypeRow
 
 if TYPE_CHECKING:
@@ -307,4 +310,72 @@ def test_retrieve_topics_runs_against_seeded_tmp_db(
 
     assert result.exit_code == 0
     assert "Rank" in result.output
+    assert "history" in result.output
+
+
+def test_pick_topic_runs_against_seeded_tmp_db(
+    tmp_path: Path,
+    classifier_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    envelope_id = "env-pick-1"
+    vector = np.ones(EMBEDDING_DIMENSION, dtype=np.float32)
+    now = datetime(2026, 4, 25, 12, 0, tzinfo=UTC)
+    envelope = ContentEnvelope.model_validate(
+        {
+            "identity": {"id": envelope_id},
+            "source": {
+                "service": "x-sync",
+                "sourceId": "tweet-pick-1",
+                "ingestedAt": now,
+            },
+            "content": {"type": "post", "body": "A thread about Roman archives."},
+            "system": {"version": "1.0.0", "createdAt": now, "updatedAt": now},
+        }
+    )
+    conn = connect_sqlite(classifier_db, load_vec=True)
+    try:
+        EnvelopeRepo(conn).save(envelope)
+        EmbeddingRepo(conn).save(
+            envelope_id=envelope_id,
+            model_version=MODEL_VERSION,
+            vector=vector,
+        )
+        TopicPrototypeRepo(conn).save_many(
+            [
+                TopicPrototypeRow(
+                    topic_id="history",
+                    exemplar_idx=0,
+                    text="Historical interpretation and archival context.",
+                    model_version=MODEL_VERSION,
+                    vector=vector,
+                )
+            ]
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    scraper_db = tmp_path / "scraper.db"
+    monkeypatch.setattr(
+        "prism.dev_cli.load_config",
+        lambda _path: _make_config(scraper_db, classifier_db, sqlite_vec=True),
+    )
+
+    def fake_pick(_self: object, **_kwargs: object) -> dict[str, object]:
+        return {
+            "topic_id": "history",
+            "confidence": 0.9,
+            "reasoning": "The body is about archives.",
+        }
+
+    monkeypatch.setattr(
+        "prism.llm_client.OllamaClient.pick",
+        fake_pick,
+    )
+
+    result = runner.invoke(dev_app, ["pick-topic", envelope_id, "--top-k", "1"])
+
+    assert result.exit_code == 0
+    assert "Chosen topic" in result.output
     assert "history" in result.output

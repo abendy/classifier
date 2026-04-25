@@ -329,6 +329,101 @@ def retrieve_topics_cmd(
     Console().print(table)
 
 
+@dev_app.command("pick-topic")
+def pick_topic_cmd(
+    envelope_id: Annotated[
+        str,
+        typer.Argument(help="Envelope id to classify."),
+    ],
+    top_k: Annotated[
+        int | None,
+        typer.Option(
+            "--top-k",
+            min=1,
+            help="Override pipeline.topic.retrieval_top_k.",
+        ),
+    ] = None,
+) -> None:
+    """Retrieve top-k candidates and run the LLM pick."""
+    cfg = load_config(CONFIG_PATH)
+    classifier_conn = connect_sqlite(
+        cfg.storage.sqlite_path, load_vec=cfg.storage.sqlite_vec
+    )
+    try:
+        import httpx
+
+        from prism.embedding import MODEL_VERSION
+        from prism.embedding_repo import EmbeddingRepo
+        from prism.envelope_repo import EnvelopeRepo
+        from prism.llm_client import OllamaClient
+        from prism.topic_llm_pick import pick_topic
+        from prism.topic_prototype_repo import TopicPrototypeRepo
+        from prism.topic_retrieval import retrieve_top_k_for_envelope
+
+        envelope = EnvelopeRepo(classifier_conn).get(envelope_id)
+        if envelope is None:
+            typer.echo(f"envelope {envelope_id!r} not found.", err=True)
+            raise typer.Exit(code=1)
+        if not envelope.content.body or not envelope.content.body.strip():
+            typer.echo(
+                f"envelope {envelope_id!r} has no body to classify.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        topic_repo = TopicPrototypeRepo(classifier_conn)
+        candidates = retrieve_top_k_for_envelope(
+            envelope_id,
+            embedding_repo=EmbeddingRepo(classifier_conn),
+            topic_repo=topic_repo,
+            model_version=MODEL_VERSION,
+            k=top_k or cfg.pipeline.topic.retrieval_top_k,
+        )
+        if not candidates:
+            typer.echo("no topic candidates returned.", err=True)
+            raise typer.Exit(code=1)
+        descriptions = topic_repo.get_descriptions(
+            (candidate.topic_id for candidate in candidates), MODEL_VERSION
+        )
+
+        with httpx.Client() as http_client:
+            client = OllamaClient(
+                base_url=cfg.pipeline.topic.ollama_url,
+                model=cfg.pipeline.topic.ollama_model,
+                client=http_client,
+            )
+            result = pick_topic(
+                envelope_body=envelope.content.body,
+                candidates=candidates,
+                descriptions_by_topic_id=descriptions,
+                llm_client=client,
+                confidence_threshold=cfg.pipeline.topic.confidence_threshold,
+            )
+    finally:
+        classifier_conn.close()
+
+    table = Table(show_header=False)
+    table.add_column("Field")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Envelope", envelope_id)
+    table.add_row("Candidates considered", str(len(candidates)))
+    table.add_row(
+        "Chosen topic",
+        result.chosen_topic_id or "(none - low confidence)",
+    )
+    if result.pick is None:
+        table.add_row("LLM topic_id", "(malformed)")
+        table.add_row("LLM confidence", "(malformed)")
+        table.add_row("LLM reasoning", "(malformed)")
+    else:
+        table.add_row("LLM topic_id", result.pick.topic_id or "(empty)")
+        table.add_row("LLM confidence", f"{result.pick.confidence:.4f}")
+        table.add_row("LLM reasoning", result.pick.reasoning)
+    if result.low_confidence_reason is not None:
+        table.add_row("Low-confidence reason", result.low_confidence_reason)
+    Console().print(table)
+
+
 def _latest_ingest_run_id(conn: sqlite3.Connection) -> str | None:
     cursor = conn.execute(
         "SELECT id FROM runs WHERE operation = 'ingest' "

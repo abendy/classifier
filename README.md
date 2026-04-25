@@ -46,6 +46,7 @@ verification without booting uvicorn.
 | `prism dev embed "<text>"` | Boot the default embedder, embed once, print model + first 8 vector components. |
 | `prism dev load-topics [--catalog P]` | Embed the topic catalog (`topics.yaml`) into `topic_prototypes`. Run after editing the catalog. |
 | `prism dev retrieve-topics <envelope-id> [--top-k N]` | Retrieve top-k topic candidates for an envelope's stored embedding. |
+| `prism dev pick-topic <envelope-id> [--top-k N]` | Retrieve candidates and run the LLM pick. Requires a running Ollama daemon. |
 
 Typical first-run loop on a fresh checkout:
 
@@ -67,6 +68,21 @@ uv run prism dev load-topics
 
 The example ships with three topics so the loader can be exercised
 end-to-end before curation begins.
+
+### LLM backend (Ollama)
+
+`prism dev pick-topic` and downstream classification depend on a
+local [Ollama](https://ollama.com) daemon. Install it once, then
+pull the configured model:
+
+```bash
+ollama pull qwen2.5:7b-instruct-q4_K_M
+ollama serve  # leave running in another terminal
+```
+
+Override `pipeline.topic.ollama_url` or `pipeline.topic.ollama_model`
+in `config.yaml` to point at a different daemon or use a different
+model.
 
 Edit `config.yaml` to match your environment — the scraper DB path,
 model choices, and thresholds are the values most likely to need

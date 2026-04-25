@@ -170,6 +170,28 @@ def test_list_vectors_for_model_round_trips_vector_bytes(
     assert rows[0].vector.tobytes() == vector.tobytes()
 
 
+def test_get_descriptions_returns_only_exemplar_zero_for_requested_model(
+    conn: sqlite3.Connection,
+) -> None:
+    repo = TopicPrototypeRepo(conn)
+    repo.save_many(
+        [
+            _row("history", 0, text="History description."),
+            _row("history", 1, text="History exemplar."),
+            _row("science", 0, text="Science description."),
+            _row("arts", 0, text="Arts description."),
+            _row("science", 0, model_version="model@2", text="Other model."),
+        ]
+    )
+
+    descriptions = repo.get_descriptions(["history", "science", "missing"], "model@1")
+
+    assert descriptions == {
+        "history": "History description.",
+        "science": "Science description.",
+    }
+
+
 def test_save_many_rejects_row_key_delimiter_inputs(
     conn: sqlite3.Connection,
 ) -> None:

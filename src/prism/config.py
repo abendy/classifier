@@ -33,6 +33,8 @@ class TopicConfig(_Base):
     confidence_threshold: float
     retrieval_top_k: int
     catalog_path: _Path = Path("topics.yaml")
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5:7b-instruct-q4_K_M"
 
 
 class TagsConfig(_Base):

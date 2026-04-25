@@ -154,13 +154,13 @@ def test_model_version_and_created_at_round_trip(conn: sqlite3.Connection) -> No
     repo = EmbeddingRepo(conn)
     repo.save(
         envelope_id="env-1",
-        model_version="bge-m3@1.5",
+        model_version="bge-large-en@1.5",
         vector=np.ones(EMBEDDING_DIMENSION, dtype=np.float32),
         now=TS,
     )
-    stored = repo.get("env-1", "bge-m3@1.5")
+    stored = repo.get("env-1", "bge-large-en@1.5")
     assert stored is not None
-    assert stored.model_version == "bge-m3@1.5"
+    assert stored.model_version == "bge-large-en@1.5"
     assert stored.created_at == TS.isoformat()
 
 
@@ -168,6 +168,14 @@ def test_save_rejects_row_key_delimiter_in_inputs(conn: sqlite3.Connection) -> N
     repo = EmbeddingRepo(conn)
     vector = np.zeros(EMBEDDING_DIMENSION, dtype=np.float32)
     with pytest.raises(ValueError, match="envelope_id"):
-        repo.save(envelope_id="env\x1f-1", model_version="bge-m3@1.5", vector=vector)
+        repo.save(
+            envelope_id="env\x1f-1",
+            model_version="bge-large-en@1.5",
+            vector=vector,
+        )
     with pytest.raises(ValueError, match="model_version"):
-        repo.save(envelope_id="env-1", model_version="bge\x1fm3@1.5", vector=vector)
+        repo.save(
+            envelope_id="env-1",
+            model_version="bge\x1flarge-en@1.5",
+            vector=vector,
+        )

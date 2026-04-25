@@ -19,7 +19,7 @@ service:
 # ── Pipeline ───────────────────────────────────────────────────────
 pipeline:
   embedding:
-    model: bge-m3
+    model: bge-large-en
     version: "1.5"
   topic:
     model: qwen2.5-7b-instruct
@@ -47,7 +47,7 @@ ingest:
   poll_interval_ms: 1000
   # Run embedding inline during ingest. Set false to run serve
   # without the fastembed model download (e.g., pre-model smoke
-  # tests). The model is ~2 GB on first load.
+  # tests). The model is ~1.2 GB on first load.
   embedding_enabled: true
 
 # ── Audit ──────────────────────────────────────────────────────────

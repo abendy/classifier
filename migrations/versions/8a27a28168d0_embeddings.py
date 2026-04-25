@@ -6,7 +6,7 @@ column, so the composite identity the plan requires is encoded in
 a synthetic ``id`` TEXT key. ``envelope_id`` and ``model_version``
 are carried as auxiliary columns so callers can filter on either
 without parsing the synthetic key; ``created_at`` is carried for
-per-row audit. Dimension is fixed at 1024 (BGE-M3 dense); a new
+per-row audit. Dimension is fixed at 1024 (default dense model); a new
 dimension requires a new migration (drop + recreate or parallel
 table).
 """

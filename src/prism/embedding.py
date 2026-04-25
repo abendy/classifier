@@ -11,7 +11,8 @@ if TYPE_CHECKING:
 
 
 EMBEDDING_DIMENSION = 1024
-MODEL_VERSION = "bge-m3@1.5"
+FASTEMBED_MODEL_NAME = "BAAI/bge-large-en-v1.5"
+MODEL_VERSION = "bge-large-en@1.5"
 
 
 class Embedder:
@@ -43,10 +44,15 @@ class Embedder:
         return vector
 
 
-def create_bge_m3_embedder() -> Embedder:
+def create_default_embedder() -> Embedder:
     """Instantiate the production Embedder backed by fastembed's
-    BGE-M3 model. First call downloads ~2 GB of ONNX weights to
-    the fastembed cache; subsequent calls are warm."""
+    default dense model.
+
+    ``fastembed 0.8`` no longer ships ``BAAI/bge-m3`` in
+    ``TextEmbedding``. We use the supported 1024-dim
+    ``BAAI/bge-large-en-v1.5`` variant so storage shape and the
+    embedder wrapper contract stay unchanged.
+    """
     from fastembed import TextEmbedding
 
-    return Embedder(TextEmbedding(model_name="BAAI/bge-m3"))
+    return Embedder(TextEmbedding(model_name=FASTEMBED_MODEL_NAME))

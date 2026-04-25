@@ -12,7 +12,7 @@ Accepted
 
 The FastAPI lifespan in `src/prism/serve.py` owns resources
 that are expensive to *import*, not just to construct. The
-first case is `create_bge_m3_embedder`, which transitively
+first case is `create_default_embedder`, which transitively
 imports `fastembed`, which transitively imports
 `onnxruntime` — a C-extension that compiles shared libraries
 and reads model metadata on import. Cost is tens to hundreds
@@ -21,7 +21,7 @@ paid once per interpreter.
 
 `prism.api` attaches the lifespan to the FastAPI app, so
 `import prism.api` transitively imports `prism.serve`. A
-naive `from prism.embedding import create_bge_m3_embedder`
+naive `from prism.embedding import create_default_embedder`
 at `serve.py`'s top would land `fastembed` in the import
 graph of every test that does `from prism.api import app`
 for `TestClient` probes, every CLI check, every schema
@@ -78,7 +78,7 @@ reference these symbols via `TYPE_CHECKING`.
 ## References
 
 - `src/prism/serve.py` — `lifespan` function with the
-  `create_bge_m3_embedder` import inside its body.
+  `create_default_embedder` import inside its body.
 - `src/prism/api.py` — attaches `lifespan` to the FastAPI
   app; the entry point whose import cost this ADR protects.
 - ADR 008 — bypass OTel one-shot `set_tracer_provider`;

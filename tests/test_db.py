@@ -35,6 +35,19 @@ def test_connect_sqlite_without_vec_lacks_extension(tmp_path: Path) -> None:
         conn.close()
 
 
+def test_connect_sqlite_uses_row_objects(tmp_path: Path) -> None:
+    conn = connect_sqlite(tmp_path / "rows.db", load_vec=False)
+    try:
+        conn.execute("CREATE TABLE x (n INTEGER)")
+        conn.execute("INSERT INTO x VALUES (42)")
+        row = conn.execute("SELECT n FROM x").fetchone()
+        assert row is not None
+        assert isinstance(row, sqlite3.Row)
+        assert row["n"] == 42
+    finally:
+        conn.close()
+
+
 def test_connect_sqlite_creates_missing_parent(tmp_path: Path) -> None:
     nested = tmp_path / "deep" / "nested" / "dir" / "fresh.db"
     assert not nested.parent.exists()

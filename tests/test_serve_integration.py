@@ -1,8 +1,8 @@
-"""End-to-end integration test for ``prism serve`` using the real BGE-M3 model.
+"""End-to-end integration test for ``prism serve`` using the real default dense model.
 
 Boots the lifespan against tmp scraper + classifier DBs and a
-real ``Embedder`` constructed by ``create_bge_m3_embedder()``.
-First run downloads ~2 GB; subsequent runs are warm.
+real ``Embedder`` constructed by ``create_default_embedder()``.
+First run downloads ~1.2 GB; subsequent runs are warm.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def _write_config(
                     "manifest_path": "service.json",
                 },
                 "pipeline": {
-                    "embedding": {"model": "bge-m3", "version": "1.5"},
+                    "embedding": {"model": "bge-large-en", "version": "1.5"},
                     "topic": {
                         "model": "qwen2.5-7b-instruct",
                         "quantization": "q4_k_m",

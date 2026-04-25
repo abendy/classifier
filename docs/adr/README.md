@@ -23,3 +23,4 @@ the replacement, but the body of the old ADR is not rewritten.
 | 014 | Mutating repo methods return the canonical post-mutation state | Accepted | 2026-04-20 |
 | 015 | Import heavyweight lifespan-owned subsystems lazily inside the lifespan body | Accepted | 2026-04-20 |
 | 016 | Serve-time long-lived loops own no span | Accepted | 2026-04-20 |
+| 017 | Use BAAI/bge-large-en-v1.5 as the default dense embedder | Accepted | 2026-04-25 |

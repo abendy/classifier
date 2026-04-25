@@ -35,7 +35,7 @@ def _make_config(
                 "manifest_path": "service.json",
             },
             "pipeline": {
-                "embedding": {"model": "bge-m3", "version": "1.5"},
+                "embedding": {"model": "bge-large-en", "version": "1.5"},
                 "topic": {
                     "model": "qwen2.5-7b-instruct",
                     "quantization": "q4_k_m",
@@ -248,6 +248,10 @@ def _install_lifespan_stubs(
         return conn
 
     monkeypatch.setattr("prism.serve.connect_sqlite", fake_connect_sqlite)
+    monkeypatch.setattr(
+        "prism.serve._validate_scraper_db_schema",
+        lambda _conn, _path: None,
+    )
     monkeypatch.setattr("prism.serve.load_config", lambda _path: cfg)
     monkeypatch.setattr("prism.serve.configure_tracing", lambda _audit: None)
     monkeypatch.setattr(
@@ -256,7 +260,7 @@ def _install_lifespan_stubs(
     )
     if embedder_factory is not None:
         monkeypatch.setattr(
-            "prism.embedding.create_bge_m3_embedder", embedder_factory
+            "prism.embedding.create_default_embedder", embedder_factory
         )
     return captured
 
@@ -369,7 +373,7 @@ def test_ingest_loop_connection_usable_on_worker_thread(tmp_path: Path) -> None:
 def test_lifespan_closes_connections_when_embedder_factory_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: if a pre-yield setup step (typically the BGE-M3
+    """Regression: if a pre-yield setup step (typically the embedder
     factory on cold start) raises, both already-opened connections
     still need to close. The outer try/finally wraps acquisition so
     a partial boot unwinds cleanly."""
@@ -423,3 +427,27 @@ def test_lifespan_closes_connections_when_task_raises_on_shutdown(
 
     assert len(opens) == 2
     assert all(c.closed for c in opens)
+
+
+def test_lifespan_closes_scraper_connection_when_schema_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _make_config(embedding_enabled=False)
+    opens: list[_FakeConnection] = []
+    _install_lifespan_stubs(monkeypatch, cfg, opens=opens)
+
+    def bad_schema(_conn: object, _path: object) -> None:
+        raise RuntimeError("missing required table 'outbox'")
+
+    monkeypatch.setattr("prism.serve._validate_scraper_db_schema", bad_schema)
+    app = FastAPI()
+
+    async def driver() -> None:
+        async with lifespan(app):
+            pytest.fail("lifespan should have raised during enter")
+
+    with pytest.raises(RuntimeError, match="required table 'outbox'"):
+        asyncio.run(driver())
+
+    assert len(opens) == 1
+    assert opens[0].closed is True

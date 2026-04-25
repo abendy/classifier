@@ -19,6 +19,7 @@ def connect_sqlite(path: Path, *, load_vec: bool) -> sqlite3.Connection:
     # iteration means no concurrent access, so the default thread
     # affinity guard adds no safety — only a ProgrammingError.
     conn = sqlite3.connect(path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
     if mode != "wal":
         conn.close()

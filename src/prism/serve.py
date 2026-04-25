@@ -2,7 +2,7 @@
 
 The lifespan boots once per uvicorn process: it configures tracing,
 opens both the scraper-side and classifier-side SQLite connections,
-optionally constructs the BGE-M3 embedder, and launches an asyncio
+optionally constructs the default dense embedder, and launches an asyncio
 task that calls ``ingest_once`` on a fixed cadence. On shutdown it
 sets a stop event, awaits the task, and closes both connections.
 
@@ -30,6 +30,7 @@ from prism.tracing import configure_tracing
 if TYPE_CHECKING:
     import sqlite3
     from collections.abc import AsyncIterator, Callable
+    from pathlib import Path
 
     from fastapi import FastAPI
 
@@ -50,6 +51,31 @@ class ServeState:
     embedder: Embedder | None
     task: asyncio.Task[None] | None
     shutdown: asyncio.Event
+
+
+def _validate_scraper_db_schema(
+    scraper_conn: sqlite3.Connection, scraper_db_path: Path
+) -> None:
+    """Fail fast when the configured scraper DB isn't the real scraper DB."""
+    cursor = scraper_conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC"
+    )
+    try:
+        table_names = [row[0] for row in cursor.fetchall()]
+    finally:
+        cursor.close()
+
+    if "outbox" in table_names:
+        return
+
+    visible = ", ".join(table_names[:8]) if table_names else "(none)"
+    if len(table_names) > 8:
+        visible += ", ..."
+    raise RuntimeError(
+        "configured scraper DB is missing required table 'outbox': "
+        f"{scraper_db_path} (found tables: {visible}). "
+        "Update config.yaml ingest.scraper_db_path to the scraper's real SQLite file."
+    )
 
 
 async def ingest_loop(
@@ -94,13 +120,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan: boot tracing + connections + loop, then tear down.
 
     The embedder factory is imported lazily inside the body so that
-    ``import prism.serve`` doesn't pull fastembed (and its ~2 GB
+    ``import prism.serve`` doesn't pull fastembed (and its ~1.2 GB
     model dependency) into test processes that never enter the
     lifespan.
 
     The outer try/finally unwinds partial startup so a failure
     between the first ``connect_sqlite`` and ``yield`` (most
-    likely the embedder factory on a cold BGE-M3 download) still
+    likely the embedder factory on a cold model download) still
     closes any resources we already acquired. An inner try/finally
     around ``await state.task`` keeps connection cleanup
     deterministic even when the background task surfaces an
@@ -116,14 +142,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scraper_conn = connect_sqlite(
             cfg.ingest.scraper_db_path, load_vec=False
         )
+        _validate_scraper_db_schema(
+            scraper_conn, cfg.ingest.scraper_db_path
+        )
         classifier_conn = connect_sqlite(
             cfg.storage.sqlite_path, load_vec=cfg.storage.sqlite_vec
         )
         embedder: Embedder | None = None
         if cfg.ingest.embedding_enabled:
-            from prism.embedding import create_bge_m3_embedder
+            from prism.embedding import create_default_embedder
 
-            embedder = create_bge_m3_embedder()
+            embedder = create_default_embedder()
         state = ServeState(
             scraper_conn=scraper_conn,
             classifier_conn=classifier_conn,

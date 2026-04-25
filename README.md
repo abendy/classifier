@@ -6,7 +6,7 @@ Multi-faceted content classification for any dada.stream content envelope.
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) for dependency management
-- ~2 GB free disk for the BGE-M3 model cache (skippable; see below)
+- ~1.2 GB free disk for the default dense model cache (skippable; see below)
 
 ## Getting started
 
@@ -46,18 +46,19 @@ that polls the scraper outbox every `ingest.poll_interval_ms`.
 Each pass saves or refreshes envelopes, embeds their bodies, and
 records per-envelope runs in `runs` for Phoenix.
 
-### BGE-M3 model weights
+### Default dense model weights
 
 With `ingest.embedding_enabled: true` (the default), the first
-`prism serve` boot downloads ~2 GB of BGE-M3 ONNX weights via
-fastembed and caches them on disk; later boots reuse the cache.
-The download path is printed on first run.
+`prism serve` boot downloads ~1.2 GB of
+`BAAI/bge-large-en-v1.5` ONNX weights via fastembed and caches
+them on disk; later boots reuse the cache. The download path is
+printed on first run.
 
 To pre-warm the cache before first serve or before running the
 integration suite:
 
 ```bash
-uv run python -c "from prism.embedding import create_bge_m3_embedder; create_bge_m3_embedder()"
+uv run python -c "from prism.embedding import create_default_embedder; create_default_embedder()"
 ```
 
 To skip both the download and the embed phase (e.g., for smoke

@@ -71,5 +71,5 @@ def test_embedding_dimension_is_1024() -> None:
     assert EMBEDDING_DIMENSION == 1024
 
 
-def test_model_version_is_bge_m3_1_5() -> None:
-    assert MODEL_VERSION == "bge-m3@1.5"
+def test_model_version_is_bge_large_en_1_5() -> None:
+    assert MODEL_VERSION == "bge-large-en@1.5"

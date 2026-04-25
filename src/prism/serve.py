@@ -53,7 +53,7 @@ class ServeState:
     shutdown: asyncio.Event
 
 
-def _validate_scraper_db_schema(
+def validate_scraper_db_schema(
     scraper_conn: sqlite3.Connection, scraper_db_path: Path
 ) -> None:
     """Fail fast when the configured scraper DB isn't the real scraper DB."""
@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scraper_conn = connect_sqlite(
             cfg.ingest.scraper_db_path, load_vec=False
         )
-        _validate_scraper_db_schema(
+        validate_scraper_db_schema(
             scraper_conn, cfg.ingest.scraper_db_path
         )
         classifier_conn = connect_sqlite(

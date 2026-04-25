@@ -249,7 +249,7 @@ def _install_lifespan_stubs(
 
     monkeypatch.setattr("prism.serve.connect_sqlite", fake_connect_sqlite)
     monkeypatch.setattr(
-        "prism.serve._validate_scraper_db_schema",
+        "prism.serve.validate_scraper_db_schema",
         lambda _conn, _path: None,
     )
     monkeypatch.setattr("prism.serve.load_config", lambda _path: cfg)
@@ -439,7 +439,7 @@ def test_lifespan_closes_scraper_connection_when_schema_invalid(
     def bad_schema(_conn: object, _path: object) -> None:
         raise RuntimeError("missing required table 'outbox'")
 
-    monkeypatch.setattr("prism.serve._validate_scraper_db_schema", bad_schema)
+    monkeypatch.setattr("prism.serve.validate_scraper_db_schema", bad_schema)
     app = FastAPI()
 
     async def driver() -> None:

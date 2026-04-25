@@ -33,6 +33,25 @@ prism db        # probe the storage layer (sqlite, vec, duckdb)
 prism serve     # run the HTTP service (binds 127.0.0.1)
 ```
 
+### Development commands
+
+`prism dev` exposes thin smoke and iteration helpers that wrap the
+same functions `prism serve` calls. They are useful for manual
+verification without booting uvicorn.
+
+| Command | Purpose |
+| --- | --- |
+| `prism dev seed-scraper [--path P] [--rows N] [--force]` | Write the scraper's four-table DDL plus N synthetic bookmark rows. |
+| `prism dev ingest-once [--no-embed]` | Run one `ingest_once` pass against the configured DBs and print stats. |
+| `prism dev embed "<text>"` | Boot the default embedder, embed once, print model + first 8 vector components. |
+
+Typical first-run loop on a fresh checkout:
+
+```bash
+uv run prism dev seed-scraper --rows 3
+uv run prism dev ingest-once
+```
+
 Edit `config.yaml` to match your environment — the scraper DB path,
 model choices, and thresholds are the values most likely to need
 tuning. If you change a value that belongs to every environment,

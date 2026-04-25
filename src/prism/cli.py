@@ -11,9 +11,15 @@ from rich.table import Table
 
 from prism.config import CONFIG_PATH, load_config
 from prism.db import attach_duckdb, connect_sqlite, migration_head
+from prism.dev_cli import dev_app
 from prism.manifest import ServiceManifest, export_schema, load_manifest
 
 app = typer.Typer(no_args_is_help=True)
+app.add_typer(
+    dev_app,
+    name="dev",
+    help="Developer smoke and iteration commands; not for production use.",
+)
 
 
 def _load_manifest_via_config() -> ServiceManifest:

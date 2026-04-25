@@ -1,0 +1,225 @@
+"""Developer smoke and iteration commands.
+
+These commands wrap existing public functions to provide a
+faster manual-iteration loop than `prism serve` or
+`pytest -m integration`. They are NOT a production surface and
+NOT a parallel test framework.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sqlite3
+import sys
+from dataclasses import asdict
+from typing import Annotated
+
+import typer
+from rich.console import Console
+from rich.table import Table
+
+from prism.config import CONFIG_PATH, load_config
+from prism.db import connect_sqlite
+from prism.ingest import ingest_once
+from prism.serve import validate_scraper_db_schema
+
+dev_app = typer.Typer(
+    no_args_is_help=True,
+    help="Developer smoke and iteration commands; not for production use.",
+)
+
+
+_SCRAPER_DDL = """
+CREATE TABLE outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    available_at TEXT NOT NULL,
+    dispatched_at TEXT,
+    attempts INTEGER DEFAULT 0,
+    last_error TEXT
+);
+CREATE TABLE tweets (
+    id TEXT PRIMARY KEY,
+    text TEXT,
+    author_id TEXT,
+    created_at TEXT,
+    lang TEXT,
+    full_json TEXT,
+    unavailable_at TEXT
+);
+CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    username TEXT
+);
+CREATE TABLE media (
+    tweet_id TEXT,
+    type TEXT,
+    url TEXT,
+    preview_image_url TEXT
+);
+"""
+
+
+@dev_app.command("seed-scraper")
+def seed_scraper(
+    path: Annotated[
+        str | None,
+        typer.Option(
+            "--path",
+            help="SQLite path to write. Defaults to ingest.scraper_db_path from config.",
+        ),
+    ] = None,
+    rows: Annotated[
+        int,
+        typer.Option(
+            "--rows", min=1, help="Number of synthetic bookmark rows to insert."
+        ),
+    ] = 1,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force", help="Overwrite an existing file at the target path."
+        ),
+    ] = False,
+) -> None:
+    """Write the scraper's four-table DDL plus N synthetic bookmark rows."""
+    target = (
+        pathlib.Path(path)
+        if path is not None
+        else load_config(CONFIG_PATH).ingest.scraper_db_path
+    )
+    if target.exists() and not force:
+        typer.echo(f"error: {target} exists. Pass --force to overwrite.", err=True)
+        raise typer.Exit(code=1)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+
+    conn = sqlite3.connect(target)
+    try:
+        conn.executescript(_SCRAPER_DDL)
+        ts = "2026-04-25T12:00:00+00:00"
+        conn.execute(
+            "INSERT INTO users (id, name, username) VALUES (?, ?, ?)",
+            ("u-dev", "Dev User", "devuser"),
+        )
+        for i in range(rows):
+            tweet_id = f"dev-{i}"
+            conn.execute(
+                "INSERT INTO tweets (id, text, author_id, created_at, lang, "
+                "full_json, unavailable_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (tweet_id, f"synthetic body #{i}", "u-dev", ts, "en", None, None),
+            )
+            conn.execute(
+                "INSERT INTO outbox (event_type, payload, created_at, available_at) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    "bookmark.created",
+                    f'{{"entityType":"bookmark","entityId":"{tweet_id}:root"}}',
+                    ts,
+                    ts,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    typer.echo(f"seeded {rows} bookmark row(s) into {target}")
+
+
+@dev_app.command("ingest-once")
+def ingest_once_cmd(
+    no_embed: Annotated[
+        bool,
+        typer.Option(
+            "--no-embed",
+            help="Skip the embed phase even when ingest.embedding_enabled is true.",
+        ),
+    ] = False,
+) -> None:
+    """Open the configured DBs, run a single ingest pass, print stats."""
+    cfg = load_config(CONFIG_PATH)
+    scraper_conn = connect_sqlite(cfg.ingest.scraper_db_path, load_vec=False)
+    classifier_conn = connect_sqlite(
+        cfg.storage.sqlite_path, load_vec=cfg.storage.sqlite_vec
+    )
+    try:
+        validate_scraper_db_schema(scraper_conn, cfg.ingest.scraper_db_path)
+        embedder = None
+        if cfg.ingest.embedding_enabled and not no_embed:
+            from prism.embedding import create_default_embedder
+
+            embedder = create_default_embedder()
+        stats = ingest_once(
+            scraper_conn=scraper_conn,
+            classifier_conn=classifier_conn,
+            embedder=embedder,
+        )
+        run_id = _latest_ingest_run_id(classifier_conn)
+    finally:
+        classifier_conn.close()
+        scraper_conn.close()
+
+    table = Table(show_header=False)
+    table.add_column("Field")
+    table.add_column("Count", justify="right")
+    if run_id is not None:
+        table.add_row("run_id", run_id)
+    for field, value in asdict(stats).items():
+        table.add_row(field, str(value))
+    Console().print(table)
+
+
+@dev_app.command("embed")
+def embed_cmd(
+    text: Annotated[
+        str | None,
+        typer.Argument(
+            help="Text to embed. If omitted, reads stdin.",
+        ),
+    ] = None,
+) -> None:
+    """Embed one string with the default dense model and print metadata."""
+    if text is None:
+        text = sys.stdin.read()
+    if not text or not text.strip():
+        typer.echo("error: empty input.", err=True)
+        raise typer.Exit(code=1)
+
+    from prism.embedding import (
+        EMBEDDING_DIMENSION,
+        FASTEMBED_MODEL_NAME,
+        MODEL_VERSION,
+        create_default_embedder,
+    )
+
+    embedder = create_default_embedder()
+    vec = embedder.embed(text)
+
+    table = Table(show_header=False)
+    table.add_column("Field")
+    table.add_column("Value", overflow="fold")
+    table.add_row("Fastembed model", FASTEMBED_MODEL_NAME)
+    table.add_row("Model version", MODEL_VERSION)
+    table.add_row("Dimension", str(EMBEDDING_DIMENSION))
+    table.add_row("Vector dtype", str(vec.dtype))
+    table.add_row(
+        "First 8 components",
+        ", ".join(f"{x:+.4f}" for x in vec[:8].tolist()),
+    )
+    Console().print(table)
+
+
+def _latest_ingest_run_id(conn: sqlite3.Connection) -> str | None:
+    cursor = conn.execute(
+        "SELECT id FROM runs WHERE operation = 'ingest' "
+        "ORDER BY started_at DESC LIMIT 1"
+    )
+    try:
+        row = cursor.fetchone()
+    finally:
+        cursor.close()
+    return None if row is None else str(row[0])

@@ -6,7 +6,7 @@ prior topic assignments for the envelope. The repo is the
 single source of truth for "which classification is live
 right now" per plan §Storage / §Reconcile and emit; the
 envelope's `classification` field is composed on read in a
-later slice and is not mutated here.
+separate read path and is not mutated here.
 
 Discriminator: `low_confidence_reason IS NULL` ⟺ confident.
 On the confident branch, `confidence` is non-NULL and

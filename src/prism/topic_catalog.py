@@ -2,7 +2,7 @@
 
 The catalog is the source of truth for topic IDs, names,
 descriptions, and exemplars. It feeds the prototype-embedding
-job (``topic_loader.embed_catalog``); later Phase 2 slices read
+job (``topic_loader.embed_catalog``); the topic-head retrieval step reads
 from ``topic_prototypes`` (the embedded form), not from the
 YAML directly.
 """

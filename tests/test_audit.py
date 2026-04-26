@@ -9,17 +9,13 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from opentelemetry.trace.status import StatusCode
 
 from prism.audit import OperationContext, RunRepo, operation
-from prism.db import connect_sqlite
 from prism.tracing import install_in_memory_exporter
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator
 
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
         InMemorySpanExporter,
@@ -43,19 +39,6 @@ _COLS = [
     "error",
     "metadata",
 ]
-
-
-@pytest.fixture
-def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    db_path = tmp_path / "prism.db"
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
-    command.upgrade(cfg, "head")
-    conn = connect_sqlite(db_path, load_vec=False)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _fetch_run(conn: sqlite3.Connection, run_id: str) -> dict[str, Any]:

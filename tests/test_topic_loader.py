@@ -6,11 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pytest
-from alembic import command
-from alembic.config import Config
 
-from prism.db import connect_sqlite
 from prism.embedding import EMBEDDING_DIMENSION, Embedder
 from prism.topic_catalog import TopicCatalog
 from prism.topic_loader import embed_catalog
@@ -18,8 +14,6 @@ from prism.topic_prototype_repo import TopicPrototypeRepo
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator
-    from pathlib import Path
 
 
 TS = datetime(2026, 4, 25, 12, 0, tzinfo=UTC)
@@ -31,20 +25,6 @@ class FakeBackend:
             np.full(EMBEDDING_DIMENSION, len(text), dtype=np.float32)
             for text in texts
         ]
-
-
-@pytest.fixture
-def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    db_path = tmp_path / "prism.db"
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
-    command.upgrade(cfg, "head")
-
-    conn = connect_sqlite(db_path, load_vec=True)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _catalog(exemplars: list[str] | None = None) -> TopicCatalog:
@@ -74,9 +54,9 @@ def _topic_ids(conn: sqlite3.Connection) -> list[str]:
 
 
 def test_embed_catalog_writes_description_plus_exemplars(
-    conn: sqlite3.Connection,
+    conn_with_vec: sqlite3.Connection,
 ) -> None:
-    repo = TopicPrototypeRepo(conn)
+    repo = TopicPrototypeRepo(conn_with_vec)
 
     summary = embed_catalog(
         _catalog(),
@@ -91,7 +71,7 @@ def test_embed_catalog_writes_description_plus_exemplars(
 
 
 def test_embed_catalog_flattens_and_embeds_subtopics_as_siblings(
-    conn: sqlite3.Connection,
+    conn_with_vec: sqlite3.Connection,
 ) -> None:
     catalog = TopicCatalog.model_validate(
         {
@@ -114,7 +94,7 @@ def test_embed_catalog_flattens_and_embeds_subtopics_as_siblings(
             ],
         }
     )
-    repo = TopicPrototypeRepo(conn)
+    repo = TopicPrototypeRepo(conn_with_vec)
 
     summary = embed_catalog(
         catalog,
@@ -126,7 +106,7 @@ def test_embed_catalog_flattens_and_embeds_subtopics_as_siblings(
 
     assert summary.topics_processed == 2
     assert summary.prototypes_written == 4
-    assert _topic_ids(conn) == [
+    assert _topic_ids(conn_with_vec) == [
         "history",
         "history",
         "history-rome",
@@ -135,9 +115,9 @@ def test_embed_catalog_flattens_and_embeds_subtopics_as_siblings(
 
 
 def test_embed_summary_reflects_catalog_model_and_counts(
-    conn: sqlite3.Connection,
+    conn_with_vec: sqlite3.Connection,
 ) -> None:
-    repo = TopicPrototypeRepo(conn)
+    repo = TopicPrototypeRepo(conn_with_vec)
 
     summary = embed_catalog(
         _catalog(["one"]),
@@ -154,9 +134,9 @@ def test_embed_summary_reflects_catalog_model_and_counts(
 
 
 def test_embed_catalog_reembed_does_not_accumulate_stale_rows(
-    conn: sqlite3.Connection,
+    conn_with_vec: sqlite3.Connection,
 ) -> None:
-    repo = TopicPrototypeRepo(conn)
+    repo = TopicPrototypeRepo(conn_with_vec)
     embedder = Embedder(FakeBackend())
     embed_catalog(
         _catalog(["first", "second"]),

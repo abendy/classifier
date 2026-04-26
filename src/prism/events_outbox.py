@@ -1,7 +1,7 @@
 """Append-only outbox for classifier-emitted events.
 
 The classifier writes one row here per emitted event. A
-future dispatcher (separate slice) reads pending rows and
+future dispatcher reads pending rows and
 publishes them to the bus.
 
 The dada.stream event envelope has eight wire fields:

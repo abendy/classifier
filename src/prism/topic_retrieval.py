@@ -2,7 +2,7 @@
 
 Given a query vector and the topic prototype repo, return the
 top-k topics by max-similarity across each topic's prototype rows.
-The LLM pick slice consumes these candidates downstream.
+The LLM pick step consumes these candidates downstream.
 """
 
 from __future__ import annotations

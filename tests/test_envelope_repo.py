@@ -10,12 +10,10 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-from prism.db import connect_sqlite
 from prism.envelope import ContentEnvelope
 from prism.envelope_repo import EnvelopeRepo
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 TS = datetime(2026, 4, 19, 12, 0, tzinfo=UTC)
@@ -103,22 +101,6 @@ def _full_dict(envelope_id: str = "env-2") -> dict[str, Any]:
         "relationships": {"parentId": "env-0", "type": "reply"},
         "system": {"version": "1.0.0", "createdAt": TS, "updatedAt": TS},
     }
-
-
-@pytest.fixture
-def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Run alembic upgrade head against a tmp sqlite DB and yield
-    a live connection positioned at head."""
-    db_path = tmp_path / "prism.db"
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
-    command.upgrade(cfg, "head")
-
-    conn = connect_sqlite(db_path, load_vec=False)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def test_save_and_get_minimal_envelope(conn: sqlite3.Connection) -> None:

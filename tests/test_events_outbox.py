@@ -5,36 +5,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 import pytest
-from alembic import command
-from alembic.config import Config
 
-from prism.db import connect_sqlite
 from prism.events_outbox import EmittedEvent, EmittedEventRow, EventOutboxRepo
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-    from pathlib import Path
-
-
 T0 = datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
-
-
-@pytest.fixture
-def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    db_path = tmp_path / "prism.db"
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
-    command.upgrade(cfg, "head")
-
-    conn = connect_sqlite(db_path, load_vec=False)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _event(

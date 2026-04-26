@@ -6,32 +6,13 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from alembic import command
-from alembic.config import Config
 
-from prism.db import connect_sqlite
 from prism.ingest_queue import IngestQueueRepo
 
 if TYPE_CHECKING:
     import sqlite3
-    from collections.abc import Iterator
-    from pathlib import Path
 
 T0 = datetime(2026, 4, 19, 12, 0, tzinfo=UTC)
-
-
-@pytest.fixture
-def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    db_path = tmp_path / "prism.db"
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
-    command.upgrade(cfg, "head")
-
-    conn = connect_sqlite(db_path, load_vec=False)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _observe(

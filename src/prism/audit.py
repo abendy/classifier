@@ -1,7 +1,7 @@
 """Run audit records and the ``operation()`` context manager.
 
 Every audited pipeline step (ingest pass today; classify, embed,
-eval as later slices bring them online) enters ``operation()``,
+and eval when enabled) enters ``operation()``,
 which writes a ``pending`` row into the ``runs`` table and opens
 an OpenTelemetry span on entry, then updates the row to
 ``success`` or ``error`` on exit. The span's ``trace_id`` lands

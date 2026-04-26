@@ -11,21 +11,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 if TYPE_CHECKING:
+    from prism.classification_types import LowConfidenceReason
     from prism.llm_client import LlmClient
     from prism.topic_retrieval import TopicCandidate
-
-
-LowConfidenceReason = Literal[
-    "below-threshold",
-    "out-of-band",
-    "llm-pick-unsure",
-    "llm-output-malformed",
-]
 
 
 class TopicPick(BaseModel):
@@ -49,10 +42,18 @@ _TOPIC_PICK_SCHEMA = TopicPick.model_json_schema()
 
 
 @dataclass(frozen=True)
-class TopicPickResult:
+class TopicPicked:
+    pick: TopicPick
+    chosen_topic_id: str
+
+
+@dataclass(frozen=True)
+class TopicLowConfidence:
+    reason: LowConfidenceReason
     pick: TopicPick | None
-    chosen_topic_id: str | None
-    low_confidence_reason: LowConfidenceReason | None
+
+
+TopicPickResult = TopicPicked | TopicLowConfidence
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,34 +99,29 @@ def pick_topic(
         pick = TopicPick.model_validate(raw)
     except ValidationError:
         _LOGGER.warning("topic_llm_pick.malformed_response", extra={"raw": raw})
-        return TopicPickResult(
+        return TopicLowConfidence(
+            reason="llm-output-malformed",
             pick=None,
-            chosen_topic_id=None,
-            low_confidence_reason="llm-output-malformed",
         )
 
     if not pick.topic_id:
-        return TopicPickResult(
+        return TopicLowConfidence(
+            reason="llm-pick-unsure",
             pick=pick,
-            chosen_topic_id=None,
-            low_confidence_reason="llm-pick-unsure",
         )
     if pick.topic_id not in candidate_ids:
-        return TopicPickResult(
+        return TopicLowConfidence(
+            reason="out-of-band",
             pick=pick,
-            chosen_topic_id=None,
-            low_confidence_reason="out-of-band",
         )
     if pick.confidence < confidence_threshold:
-        return TopicPickResult(
+        return TopicLowConfidence(
+            reason="below-threshold",
             pick=pick,
-            chosen_topic_id=None,
-            low_confidence_reason="below-threshold",
         )
-    return TopicPickResult(
+    return TopicPicked(
         pick=pick,
         chosen_topic_id=pick.topic_id,
-        low_confidence_reason=None,
     )
 
 

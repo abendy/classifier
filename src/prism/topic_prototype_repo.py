@@ -8,6 +8,7 @@ identity (ADR 011); upserts go via DELETE-then-INSERT (ADR 012).
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -16,10 +17,9 @@ import numpy as np
 import sqlite_vec
 
 from prism.embedding import EMBEDDING_DIMENSION
-from prism.embedding_repo import _ROW_KEY_DELIMITER
+from prism.vec_keys import ROW_KEY_DELIMITER, encode
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Iterable
 
 
@@ -43,14 +43,11 @@ class StoredTopicPrototype:
 
 
 def _row_key(topic_id: str, exemplar_idx: int, model_version: str) -> str:
-    if _ROW_KEY_DELIMITER in topic_id:
+    if ROW_KEY_DELIMITER in topic_id:
         raise ValueError(f"topic_id contains delimiter: {topic_id!r}")
-    if _ROW_KEY_DELIMITER in model_version:
+    if ROW_KEY_DELIMITER in model_version:
         raise ValueError(f"model_version contains delimiter: {model_version!r}")
-    return (
-        f"{topic_id}{_ROW_KEY_DELIMITER}{exemplar_idx}"
-        f"{_ROW_KEY_DELIMITER}{model_version}"
-    )
+    return encode(topic_id, str(exemplar_idx), model_version)
 
 
 class TopicPrototypeRepo:
@@ -58,27 +55,27 @@ class TopicPrototypeRepo:
         self._conn = conn
 
     def delete_for_topic(self, topic_id: str, model_version: str) -> int:
-        cursor = self._conn.execute(
-            "DELETE FROM topic_prototypes "
-            "WHERE topic_id = ? AND model_version = ?",
-            (topic_id, model_version),
-        )
+        cursor: sqlite3.Cursor | None = None
         try:
-            return cursor.rowcount
+            cursor = self._conn.execute(
+                "DELETE FROM topic_prototypes "
+                "WHERE topic_id = ? AND model_version = ?",
+                (topic_id, model_version),
+            )
+            deleted = cursor.rowcount
+            self._conn.commit()
+        except sqlite3.Error:
+            self._conn.rollback()
+            raise
         finally:
-            cursor.close()
+            if cursor is not None:
+                cursor.close()
+        return deleted
 
     def save_many(self, rows: Iterable[TopicPrototypeRow]) -> int:
         rows = list(rows)
         if not rows:
             return 0
-        now_default = datetime.now(UTC)
-        seen_topics: set[tuple[str, str]] = set()
-        for row in rows:
-            key = (row.topic_id, row.model_version)
-            if key not in seen_topics:
-                self.delete_for_topic(row.topic_id, row.model_version)
-                seen_topics.add(key)
         for row in rows:
             if row.vector.dtype != np.float32:
                 raise ValueError(f"vector dtype must be float32, got {row.vector.dtype}")
@@ -87,22 +84,48 @@ class TopicPrototypeRepo:
                     f"vector shape must be ({EMBEDDING_DIMENSION},), "
                     f"got {row.vector.shape}"
                 )
-            payload = sqlite_vec.serialize_float32(row.vector.tolist())
-            self._conn.execute(
-                "INSERT INTO topic_prototypes "
-                "(id, embedding, topic_id, exemplar_idx, text, "
-                "model_version, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    _row_key(row.topic_id, row.exemplar_idx, row.model_version),
-                    payload,
-                    row.topic_id,
-                    row.exemplar_idx,
-                    row.text,
-                    row.model_version,
-                    (row.created_at or now_default).isoformat(),
-                ),
-            )
+
+        now_default = datetime.now(UTC)
+        seen_topics: set[tuple[str, str]] = set()
+        cursors: list[sqlite3.Cursor] = []
+        try:
+            for row in rows:
+                key = (row.topic_id, row.model_version)
+                if key not in seen_topics:
+                    cursors.append(
+                        self._conn.execute(
+                            "DELETE FROM topic_prototypes "
+                            "WHERE topic_id = ? AND model_version = ?",
+                            (row.topic_id, row.model_version),
+                        )
+                    )
+                    seen_topics.add(key)
+            for row in rows:
+                payload = sqlite_vec.serialize_float32(row.vector.tolist())
+                cursors.append(
+                    self._conn.execute(
+                        "INSERT INTO topic_prototypes "
+                        "(id, embedding, topic_id, exemplar_idx, text, "
+                        "model_version, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            _row_key(row.topic_id, row.exemplar_idx, row.model_version),
+                            payload,
+                            row.topic_id,
+                            row.exemplar_idx,
+                            row.text,
+                            row.model_version,
+                            (row.created_at or now_default).isoformat(),
+                        ),
+                    )
+                )
+            self._conn.commit()
+        except sqlite3.Error:
+            self._conn.rollback()
+            raise
+        finally:
+            for cursor in cursors:
+                cursor.close()
         return len(rows)
 
     def count(self, model_version: str) -> int:

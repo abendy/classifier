@@ -12,8 +12,9 @@ Discriminator: `low_confidence_reason IS NULL` ⟺ confident.
 On the confident branch, `confidence` is non-NULL and
 `topic_assignments` are populated; on the low-confidence
 branch, `confidence` is NULL and `topic_assignments` is an
-empty list. The repo enforces the invariant in
-``_validate_write``.
+empty list. The caller-facing write shape is a union so
+confident and low-confidence writes cannot be constructed as
+invalid mixed states.
 """
 
 from __future__ import annotations
@@ -21,43 +22,36 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from prism.classification_types import LowConfidenceReason
     from prism.envelope import TopicAssignment
 
 
-LowConfidenceReason = Literal[
-    "below-threshold",
-    "out-of-band",
-    "llm-pick-unsure",
-    "llm-output-malformed",
-]
-
-
 @dataclass(frozen=True)
-class ClassificationWrite:
-    """Caller-facing input shape for ``ClassificationRepo.upsert``.
-
-    The discriminator is implicit:
-    - confident:  ``low_confidence_reason is None``,
-                  ``confidence is not None``,
-                  ``topic_assignments`` non-empty.
-    - low-confidence: ``low_confidence_reason is not None``,
-                  ``confidence is None``,
-                  ``topic_assignments`` empty.
-    """
-
+class ConfidentClassification:
     envelope_id: str
     active_run_id: str
     tags: list[str] | None
     topic_assignments: list[TopicAssignment]
-    confidence: float | None
-    low_confidence_reason: LowConfidenceReason | None
+    confidence: float
     classified_by: str
     classified_at: datetime
+
+
+@dataclass(frozen=True)
+class LowConfidenceClassification:
+    envelope_id: str
+    active_run_id: str
+    reason: LowConfidenceReason
+    classified_by: str
+    classified_at: datetime
+
+
+ClassificationWrite = ConfidentClassification | LowConfidenceClassification
 
 
 @dataclass(frozen=True)
@@ -129,8 +123,12 @@ class ClassificationRepo:
         inside a single auto-managed transaction; rollback on any
         sqlite error leaves both tables unchanged.
         """
-        _validate_write(write)
-        tags_json = None if write.tags is None else json.dumps(write.tags, ensure_ascii=False)
+        is_confident = isinstance(write, ConfidentClassification)
+        tags = write.tags if is_confident else None
+        confidence = write.confidence if is_confident else None
+        low_confidence_reason = None if is_confident else write.reason
+        topic_assignments = write.topic_assignments if is_confident else []
+        tags_json = None if tags is None else json.dumps(tags, ensure_ascii=False)
         classified_at_iso = write.classified_at.isoformat()
         cursor: sqlite3.Cursor | None = None
         try:
@@ -140,8 +138,8 @@ class ClassificationRepo:
                     write.envelope_id,
                     write.active_run_id,
                     tags_json,
-                    write.confidence,
-                    write.low_confidence_reason,
+                    confidence,
+                    low_confidence_reason,
                     write.classified_by,
                     classified_at_iso,
                 ),
@@ -150,7 +148,7 @@ class ClassificationRepo:
                 _DELETE_TOPIC_ASSIGNMENTS_SQL,
                 (write.envelope_id,),
             )
-            for assignment in write.topic_assignments:
+            for assignment in topic_assignments:
                 matched_json = (
                     None
                     if assignment.matched_terms is None
@@ -176,7 +174,7 @@ class ClassificationRepo:
         return StoredClassification(
             envelope_id=write.envelope_id,
             active_run_id=write.active_run_id,
-            tags=write.tags,
+            tags=tags,
             topic_assignments=[
                 StoredTopicAssignment(
                     topic_id=a.topic_id,
@@ -184,29 +182,10 @@ class ClassificationRepo:
                     confidence=a.confidence,
                     matched_terms=a.matched_terms,
                 )
-                for a in write.topic_assignments
+                for a in topic_assignments
             ],
-            confidence=write.confidence,
-            low_confidence_reason=write.low_confidence_reason,
+            confidence=confidence,
+            low_confidence_reason=low_confidence_reason,
             classified_by=write.classified_by,
             classified_at=classified_at_iso,
         )
-
-
-def _validate_write(write: ClassificationWrite) -> None:
-    """Enforce the discriminated-union invariant on input.
-
-    Catches caller errors at the seam rather than letting them
-    land as malformed rows. Raises ``ValueError`` with a clear
-    message when the invariant is violated.
-    """
-    if write.low_confidence_reason is None:
-        if write.confidence is None:
-            raise ValueError("confident classification requires non-None confidence")
-        if not write.topic_assignments:
-            raise ValueError("confident classification requires at least one topic assignment")
-    else:
-        if write.confidence is not None:
-            raise ValueError("low-confidence classification must have confidence=None")
-        if write.topic_assignments:
-            raise ValueError("low-confidence classification must have empty topic_assignments")

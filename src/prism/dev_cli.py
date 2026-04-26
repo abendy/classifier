@@ -268,11 +268,7 @@ def load_topics_cmd(
         summary = embed_catalog(
             parsed, embedder=embedder, repo=repo, model_version=MODEL_VERSION
         )
-        classifier_conn.commit()
         total = repo.count(MODEL_VERSION)
-    except Exception:
-        classifier_conn.rollback()
-        raise
     finally:
         classifier_conn.close()
 
@@ -378,7 +374,7 @@ def pick_topic_cmd(
         from prism.embedding_repo import EmbeddingRepo
         from prism.envelope_repo import EnvelopeRepo
         from prism.llm_client import OllamaClient
-        from prism.topic_llm_pick import pick_topic
+        from prism.topic_llm_pick import TopicLowConfidence, TopicPicked, pick_topic
         from prism.topic_prototype_repo import TopicPrototypeRepo
         from prism.topic_retrieval import retrieve_top_k_for_envelope
 
@@ -431,7 +427,9 @@ def pick_topic_cmd(
     table.add_row("Candidates considered", str(len(candidates)))
     table.add_row(
         "Chosen topic",
-        result.chosen_topic_id or "(none - low confidence)",
+        result.chosen_topic_id
+        if isinstance(result, TopicPicked)
+        else "(none - low confidence)",
     )
     if result.pick is None:
         table.add_row("LLM topic_id", "(malformed)")
@@ -441,8 +439,8 @@ def pick_topic_cmd(
         table.add_row("LLM topic_id", result.pick.topic_id or "(empty)")
         table.add_row("LLM confidence", f"{result.pick.confidence:.4f}")
         table.add_row("LLM reasoning", result.pick.reasoning)
-    if result.low_confidence_reason is not None:
-        table.add_row("Low-confidence reason", result.low_confidence_reason)
+    if isinstance(result, TopicLowConfidence):
+        table.add_row("Low-confidence reason", result.reason)
     Console().print(table)
 
 

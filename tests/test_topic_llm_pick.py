@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from prism.topic_llm_pick import pick_topic
+from prism.topic_llm_pick import TopicLowConfidence, TopicPicked, pick_topic
 from prism.topic_retrieval import TopicCandidate
 
 
@@ -54,8 +54,8 @@ def test_pick_topic_returns_confident_pick() -> None:
         confidence_threshold=0.55,
     )
 
+    assert isinstance(result, TopicPicked)
     assert result.chosen_topic_id == "history"
-    assert result.low_confidence_reason is None
 
 
 def test_pick_topic_marks_below_threshold() -> None:
@@ -67,8 +67,8 @@ def test_pick_topic_marks_below_threshold() -> None:
         confidence_threshold=0.55,
     )
 
-    assert result.chosen_topic_id is None
-    assert result.low_confidence_reason == "below-threshold"
+    assert isinstance(result, TopicLowConfidence)
+    assert result.reason == "below-threshold"
 
 
 def test_pick_topic_marks_empty_topic_id_unsure() -> None:
@@ -80,8 +80,8 @@ def test_pick_topic_marks_empty_topic_id_unsure() -> None:
         confidence_threshold=0.55,
     )
 
-    assert result.chosen_topic_id is None
-    assert result.low_confidence_reason == "llm-pick-unsure"
+    assert isinstance(result, TopicLowConfidence)
+    assert result.reason == "llm-pick-unsure"
 
 
 def test_pick_topic_marks_out_of_band_topic_id() -> None:
@@ -93,8 +93,8 @@ def test_pick_topic_marks_out_of_band_topic_id() -> None:
         confidence_threshold=0.55,
     )
 
-    assert result.chosen_topic_id is None
-    assert result.low_confidence_reason == "out-of-band"
+    assert isinstance(result, TopicLowConfidence)
+    assert result.reason == "out-of-band"
 
 
 def test_pick_topic_marks_malformed_llm_output() -> None:
@@ -112,9 +112,9 @@ def test_pick_topic_marks_malformed_llm_output() -> None:
         confidence_threshold=0.55,
     )
 
+    assert isinstance(result, TopicLowConfidence)
     assert result.pick is None
-    assert result.chosen_topic_id is None
-    assert result.low_confidence_reason == "llm-output-malformed"
+    assert result.reason == "llm-output-malformed"
 
 
 def test_pick_topic_rejects_empty_candidates() -> None:

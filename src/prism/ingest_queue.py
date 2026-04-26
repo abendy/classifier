@@ -154,5 +154,27 @@ class IngestQueueRepo:
                 cursor.close()
 
 
+def backoff_seconds(attempts: int) -> int:
+    return min(3600, 30 * (2 ** (attempts - 1)))
+
+
+def fail_queue_item(
+    item: IngestQueueItem,
+    *,
+    queue_repo: IngestQueueRepo,
+    error_prefix: str,
+    exc: Exception | str,
+    now: datetime | None,
+) -> None:
+    """Mark an ingest queue item failed with the standard backoff."""
+    error = exc if isinstance(exc, str) else f"{error_prefix}: {exc!r}"
+    queue_repo.mark_failed(
+        item.source_event_id,
+        error=error,
+        backoff_seconds=backoff_seconds(item.attempts + 1),
+        now=now,
+    )
+
+
 def _iso(now: datetime | None) -> str:
     return (now if now is not None else datetime.now(UTC)).isoformat()

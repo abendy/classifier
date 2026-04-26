@@ -155,6 +155,9 @@ def _run(
     scraper_db: Path, classifier_conn: sqlite3.Connection, **kw: Any
 ) -> IngestStats:
     kw.setdefault("service_version", "test")
+    kw.setdefault("confidence_threshold", 0.55)
+    kw.setdefault("retrieval_top_k", 5)
+    kw.setdefault("ollama_model", "qwen2.5:7b-instruct-q4_K_M")
     scraper_conn = open_scraper_readonly(scraper_db)
     try:
         return ingest_once(

@@ -10,6 +10,7 @@ import numpy as np
 import sqlite_vec
 
 from prism.embedding import EMBEDDING_DIMENSION
+from prism.vec_keys import ROW_KEY_DELIMITER, encode
 
 
 @dataclass(frozen=True)
@@ -20,16 +21,8 @@ class StoredEmbedding:
     vector: np.ndarray
 
 
-# ASCII 0x1F (unit separator) is the row-key delimiter — a control
-# character reserved for this purpose, never present in UUID v7
-# envelope ids or ``vendor/model@version``-style model strings.
-# Inputs containing it are rejected at save time so collisions
-# can't be reached silently. See ADR 011.
-_ROW_KEY_DELIMITER = "\x1f"
-
-
 def _row_key(envelope_id: str, model_version: str) -> str:
-    return f"{envelope_id}{_ROW_KEY_DELIMITER}{model_version}"
+    return encode(envelope_id, model_version)
 
 
 class EmbeddingRepo:
@@ -52,11 +45,11 @@ class EmbeddingRepo:
         now: datetime | None = None,
     ) -> None:
         """Upsert the row for ``(envelope_id, model_version)``. Commits."""
-        if _ROW_KEY_DELIMITER in envelope_id:
+        if ROW_KEY_DELIMITER in envelope_id:
             raise ValueError(
                 "envelope_id must not contain the row-key delimiter"
             )
-        if _ROW_KEY_DELIMITER in model_version:
+        if ROW_KEY_DELIMITER in model_version:
             raise ValueError(
                 "model_version must not contain the row-key delimiter"
             )

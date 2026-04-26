@@ -12,8 +12,8 @@ from alembic.config import Config
 
 from prism.classification_repo import (
     ClassificationRepo,
-    ClassificationWrite,
-    LowConfidenceReason,
+    ConfidentClassification,
+    LowConfidenceClassification,
     StoredClassification,
     StoredTopicAssignment,
 )
@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     import sqlite3
     from collections.abc import Iterator
     from pathlib import Path
+
+    from prism.classification_types import LowConfidenceReason
 
 
 T0 = datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
@@ -66,17 +68,16 @@ def _confident_write(
     active_run_id: str = "run-1",
     tags: list[str] | None = None,
     topic_assignments: list[TopicAssignment] | None = None,
-    confidence: float | None = 0.88,
+    confidence: float = 0.88,
     classified_by: str = "prism@test",
     classified_at: datetime = T0,
-) -> ClassificationWrite:
-    return ClassificationWrite(
+) -> ConfidentClassification:
+    return ConfidentClassification(
         envelope_id=envelope_id,
         active_run_id=active_run_id,
         tags=tags,
         topic_assignments=topic_assignments if topic_assignments is not None else [_assignment()],
         confidence=confidence,
-        low_confidence_reason=None,
         classified_by=classified_by,
         classified_at=classified_at,
     )
@@ -86,20 +87,14 @@ def _low_confidence_write(
     *,
     envelope_id: str = "env-1",
     active_run_id: str = "run-1",
-    tags: list[str] | None = None,
-    topic_assignments: list[TopicAssignment] | None = None,
-    confidence: float | None = None,
     low_confidence_reason: LowConfidenceReason = "below-threshold",
     classified_by: str = "prism@test",
     classified_at: datetime = T0,
-) -> ClassificationWrite:
-    return ClassificationWrite(
+) -> LowConfidenceClassification:
+    return LowConfidenceClassification(
         envelope_id=envelope_id,
         active_run_id=active_run_id,
-        tags=tags,
-        topic_assignments=topic_assignments or [],
-        confidence=confidence,
-        low_confidence_reason=low_confidence_reason,
+        reason=low_confidence_reason,
         classified_by=classified_by,
         classified_at=classified_at,
     )
@@ -138,16 +133,6 @@ def _fetch_topic_assignments(
         cursor.close()
 
 
-def _count_classifications(conn: sqlite3.Connection) -> int:
-    cursor = conn.execute("SELECT COUNT(*) FROM classifications")
-    try:
-        row = cursor.fetchone()
-    finally:
-        cursor.close()
-    assert row is not None
-    return int(row[0])
-
-
 def _stored_from_db(conn: sqlite3.Connection, envelope_id: str) -> StoredClassification:
     classification = _fetch_classification(conn, envelope_id)
     assignments = _fetch_topic_assignments(conn, envelope_id)
@@ -173,6 +158,25 @@ def _stored_from_db(conn: sqlite3.Connection, envelope_id: str) -> StoredClassif
         classified_by=str(classification["classified_by"]),
         classified_at=str(classification["classified_at"]),
     )
+
+
+def test_confident_write_shape_has_no_low_confidence_reason() -> None:
+    write = _confident_write()
+
+    assert not hasattr(write, "low_confidence_reason")
+
+
+def test_low_confidence_write_shape_has_reason() -> None:
+    write = _low_confidence_write(low_confidence_reason="llm-pick-unsure")
+
+    assert write.reason == "llm-pick-unsure"
+
+
+def test_low_confidence_write_shape_has_no_confident_payload() -> None:
+    write = _low_confidence_write()
+
+    assert not hasattr(write, "confidence")
+    assert not hasattr(write, "topic_assignments")
 
 
 def test_upsert_inserts_confident_classification_and_assignments(
@@ -278,25 +282,3 @@ def test_upsert_preserves_non_ascii_in_tags_and_matched_terms(
     assert assignment_rows[0]["matched_terms"] == '["café", "naïve"]'
     assert json.loads(stored_row["tags"]) == write.tags
     assert json.loads(assignment_rows[0]["matched_terms"]) == ["café", "naïve"]
-
-
-@pytest.mark.parametrize(
-    "write",
-    [
-        _confident_write(confidence=None),
-        _confident_write(topic_assignments=[]),
-        _low_confidence_write(confidence=0.2),
-        _low_confidence_write(topic_assignments=[_assignment()]),
-    ],
-)
-def test_upsert_rejects_invalid_discriminator_combinations(
-    conn: sqlite3.Connection,
-    write: ClassificationWrite,
-) -> None:
-    repo = ClassificationRepo(conn)
-    before_count = _count_classifications(conn)
-
-    with pytest.raises(ValueError):
-        repo.upsert(write)
-
-    assert _count_classifications(conn) == before_count

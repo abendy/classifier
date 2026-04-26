@@ -96,6 +96,7 @@ def classify_envelope(
             "sourceId": envelope.source.source_id,
         },
         now=classified_at,
+        internal=True,
     )
     try:
         event_outbox_repo.enqueue(ingested_event)

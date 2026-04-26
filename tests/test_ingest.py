@@ -657,15 +657,18 @@ def _pick_payload(topic_id: str, confidence: float) -> dict[str, Any]:
     }
 
 
-def _event_rows(conn: sqlite3.Connection) -> list[tuple[str, dict[str, Any]]]:
+def _event_rows(conn: sqlite3.Connection) -> list[tuple[str, dict[str, Any], bool]]:
     cursor = conn.execute(
-        "SELECT event_type, payload FROM events_outbox ORDER BY rowid"
+        "SELECT event_type, payload, internal FROM events_outbox ORDER BY rowid"
     )
     try:
         rows = cursor.fetchall()
     finally:
         cursor.close()
-    return [(str(event_type), json.loads(str(payload))) for event_type, payload in rows]
+    return [
+        (str(event_type), json.loads(str(payload)), bool(internal))
+        for event_type, payload, internal in rows
+    ]
 
 
 def test_embedder_provided_embeds_each_saved_envelope(
@@ -726,6 +729,7 @@ def test_ingest_classify_writes_confident_classification(
                 "service": "x-sync",
                 "sourceId": "t-1",
             },
+            True,
         ),
         (
             "content-classified",
@@ -740,6 +744,7 @@ def test_ingest_classify_writes_confident_classification(
                     {"confidence": 0.91, "topicId": "history"}
                 ],
             },
+            False,
         ),
     ]
 
@@ -793,9 +798,9 @@ def test_ingest_classify_writes_low_confidence(
     assert confidence is None
     assert reason == expected_reason
     events = _event_rows(classifier_conn)
-    assert [event_type for event_type, _payload in events] == [
-        "content-ingested",
-        "content-classified-low-confidence",
+    assert [(event_type, internal) for event_type, _payload, internal in events] == [
+        ("content-ingested", True),
+        ("content-classified-low-confidence", False),
     ]
     low_payload = events[1][1]
     assert low_payload["reason"] == expected_reason
@@ -846,6 +851,7 @@ def test_ingest_classify_marks_failed_on_empty_retrieval(
                 "service": "x-sync",
                 "sourceId": "t-1",
             },
+            True,
         )
     ]
 
@@ -891,6 +897,7 @@ def test_ingest_classify_marks_failed_on_llm_exception(
                 "service": "x-sync",
                 "sourceId": "t-1",
             },
+            True,
         )
     ]
 

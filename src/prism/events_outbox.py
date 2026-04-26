@@ -18,11 +18,17 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from uuid_utils import uuid7
 
 from prism.envelope import ENVELOPE_VERSION
+
+EventType = Literal[
+    "content-ingested",
+    "content-classified",
+    "content-classified-low-confidence",
+]
 
 
 @dataclass(frozen=True)
@@ -35,25 +41,27 @@ class EmittedEvent:
     """
 
     id: str
-    event_type: str
+    event_type: EventType
     source: str
     correlation_id: str
     causation_id: str | None
     payload: dict[str, Any]
     envelope_version: str
     created_at: str
+    internal: bool = False
 
     @classmethod
     def new(
         cls,
         *,
-        event_type: str,
+        event_type: EventType,
         source: str,
         correlation_id: str,
         causation_id: str | None,
         payload: dict[str, Any],
         envelope_version: str = ENVELOPE_VERSION,
         now: datetime | None = None,
+        internal: bool = False,
     ) -> EmittedEvent:
         """Mint a fresh EmittedEvent with a uuid7 id and ISO timestamp.
 
@@ -71,6 +79,7 @@ class EmittedEvent:
             payload=payload,
             envelope_version=envelope_version,
             created_at=timestamp,
+            internal=internal,
         )
 
 
@@ -83,7 +92,7 @@ class EmittedEventRow:
     """
 
     id: str
-    event_type: str
+    event_type: EventType
     source: str
     envelope_version: str
     correlation_id: str
@@ -91,13 +100,14 @@ class EmittedEventRow:
     payload: str
     created_at: str
     dispatched_at: str | None
+    internal: bool
 
 
 _INSERT_SQL = (
     "INSERT INTO events_outbox "
     "(id, event_type, source, envelope_version, correlation_id, "
-    "causation_id, payload, created_at, dispatched_at) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+    "causation_id, payload, created_at, dispatched_at, internal) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)"
 )
 
 
@@ -133,6 +143,7 @@ class EventOutboxRepo:
                     event.causation_id,
                     payload_json,
                     event.created_at,
+                    int(event.internal),
                 ),
             )
             self._conn.commit()
@@ -152,4 +163,5 @@ class EventOutboxRepo:
             payload=payload_json,
             created_at=event.created_at,
             dispatched_at=None,
+            internal=event.internal,
         )

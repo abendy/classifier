@@ -9,7 +9,12 @@ from uuid import UUID
 
 import pytest
 
-from prism.events_outbox import EmittedEvent, EmittedEventRow, EventOutboxRepo
+from prism.events_outbox import (
+    EmittedEvent,
+    EmittedEventRow,
+    EventOutboxRepo,
+    EventType,
+)
 
 T0 = datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
 
@@ -17,13 +22,14 @@ T0 = datetime(2026, 4, 25, 10, 0, tzinfo=UTC)
 def _event(
     *,
     id: str = "evt-1",
-    event_type: str = "content-classified",
+    event_type: EventType = "content-classified",
     source: str = "prism",
     correlation_id: str = "env-1",
     causation_id: str | None = "run-1",
     payload: dict[str, object] | None = None,
     envelope_version: str = "1.0.0",
     created_at: str | None = None,
+    internal: bool = False,
 ) -> EmittedEvent:
     return EmittedEvent(
         id=id,
@@ -34,13 +40,14 @@ def _event(
         payload=payload or {"k": "v"},
         envelope_version=envelope_version,
         created_at=created_at or T0.isoformat(),
+        internal=internal,
     )
 
 
 def _fetch_event_row(conn: sqlite3.Connection, event_id: str) -> EmittedEventRow:
     cursor = conn.execute(
         "SELECT id, event_type, source, envelope_version, correlation_id, "
-        "causation_id, payload, created_at, dispatched_at "
+        "causation_id, payload, created_at, dispatched_at, internal "
         "FROM events_outbox WHERE id = ?",
         (event_id,),
     )
@@ -49,7 +56,31 @@ def _fetch_event_row(conn: sqlite3.Connection, event_id: str) -> EmittedEventRow
     finally:
         cursor.close()
     assert row is not None
-    return EmittedEventRow(*row)
+    return EmittedEventRow(
+        id=row[0],
+        event_type=row[1],
+        source=row[2],
+        envelope_version=row[3],
+        correlation_id=row[4],
+        causation_id=row[5],
+        payload=row[6],
+        created_at=row[7],
+        dispatched_at=row[8],
+        internal=bool(row[9]),
+    )
+
+
+def _raw_internal(conn: sqlite3.Connection, event_id: str) -> int:
+    cursor = conn.execute(
+        "SELECT internal FROM events_outbox WHERE id = ?",
+        (event_id,),
+    )
+    try:
+        row = cursor.fetchone()
+    finally:
+        cursor.close()
+    assert row is not None
+    return int(row[0])
 
 
 def _count(conn: sqlite3.Connection) -> int:
@@ -81,8 +112,10 @@ def test_enqueue_inserts_row_and_returns_canonical_state(
         payload='{"k": "v"}',
         created_at=event.created_at,
         dispatched_at=None,
+        internal=False,
     )
     assert returned == stored
+    assert stored.internal is False
 
 
 def test_enqueue_serializes_payload_with_sorted_keys(
@@ -116,6 +149,18 @@ def test_enqueue_persists_null_causation(conn: sqlite3.Connection) -> None:
 
     assert stored.causation_id is None
     assert returned.causation_id is None
+
+
+def test_enqueue_round_trips_internal_true(conn: sqlite3.Connection) -> None:
+    repo = EventOutboxRepo(conn)
+    event = _event(id="evt-internal", internal=True)
+
+    returned = repo.enqueue(event)
+    stored = _fetch_event_row(conn, event.id)
+
+    assert returned.internal is True
+    assert stored.internal is True
+    assert _raw_internal(conn, event.id) == 1
 
 
 def test_enqueue_rolls_back_on_duplicate_id(conn: sqlite3.Connection) -> None:
@@ -168,6 +213,7 @@ def test_events_outbox_columns_match_spec(conn: sqlite3.Connection) -> None:
         "payload",
         "created_at",
         "dispatched_at",
+        "internal",
     ]
 
 

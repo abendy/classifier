@@ -27,3 +27,4 @@ the replacement, but the body of the old ADR is not rewritten.
 | 018 | Python full-scan cosine for topic-prototype retrieval | Accepted | 2026-04-25 |
 | 019 | Ollama as the default local LLM backend | Accepted | 2026-04-25 |
 | 020 | Typed columns for the events outbox table | Accepted | 2026-04-25 |
+| 021 | Two-table normal form for classifications and topic_assignments | Accepted | 2026-04-25 |

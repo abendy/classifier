@@ -24,6 +24,7 @@ from prism.ingest import CURSOR_NAME, IngestStats, ingest_once
 from prism.ingest_queue import IngestQueueRepo
 from prism.scraper_mapper import open_scraper_readonly
 from prism.sync_state import SyncStateRepo
+from prism.topic_prototype_repo import TopicPrototypeRepo, TopicPrototypeRow
 from prism.tracing import install_in_memory_exporter
 
 if TYPE_CHECKING:
@@ -153,6 +154,7 @@ def _seed_user(conn: sqlite3.Connection) -> None:
 def _run(
     scraper_db: Path, classifier_conn: sqlite3.Connection, **kw: Any
 ) -> IngestStats:
+    kw.setdefault("service_version", "test")
     scraper_conn = open_scraper_readonly(scraper_db)
     try:
         return ingest_once(
@@ -592,6 +594,24 @@ class _StubBackend:
         return [self._vector.copy() for _ in texts]
 
 
+class _StubLlmClient:
+    def __init__(self, response: dict[str, Any] | Exception) -> None:
+        self._response = response
+
+    def pick(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict[str, Any],
+        timeout_s: float,
+    ) -> dict[str, Any]:
+        _ = (system, user, schema, timeout_s)
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+
 def _envelope_id_for(conn: sqlite3.Connection, source_id: str) -> str:
     (envelope_id,) = _fetch_one(
         conn,
@@ -599,6 +619,50 @@ def _envelope_id_for(conn: sqlite3.Connection, source_id: str) -> str:
         (source_id,),
     )
     return envelope_id
+
+
+def _seed_topic_prototype(
+    conn: sqlite3.Connection,
+    *,
+    topic_id: str = "history",
+    vector: np.ndarray | None = None,
+) -> None:
+    prototype_vector = (
+        vector
+        if vector is not None
+        else np.ones(EMBEDDING_DIMENSION, dtype=np.float32)
+    )
+    TopicPrototypeRepo(conn).save_many(
+        [
+            TopicPrototypeRow(
+                topic_id=topic_id,
+                exemplar_idx=0,
+                text=f"{topic_id} description",
+                model_version=MODEL_VERSION,
+                vector=prototype_vector,
+                created_at=T0,
+            )
+        ]
+    )
+
+
+def _pick_payload(topic_id: str, confidence: float) -> dict[str, Any]:
+    return {
+        "topic_id": topic_id,
+        "confidence": confidence,
+        "reasoning": "best match",
+    }
+
+
+def _event_rows(conn: sqlite3.Connection) -> list[tuple[str, dict[str, Any]]]:
+    cursor = conn.execute(
+        "SELECT event_type, payload FROM events_outbox ORDER BY rowid"
+    )
+    try:
+        rows = cursor.fetchall()
+    finally:
+        cursor.close()
+    return [(str(event_type), json.loads(str(payload))) for event_type, payload in rows]
 
 
 def test_embedder_provided_embeds_each_saved_envelope(
@@ -617,6 +681,243 @@ def test_embedder_provided_embeds_each_saved_envelope(
     assert stats.embed_skipped_no_body == 0
     envelope_id = _envelope_id_for(classifier_conn, "t-1")
     assert EmbeddingRepo(classifier_conn).exists(envelope_id, MODEL_VERSION)
+
+
+def test_ingest_classify_writes_confident_classification(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="roman archives")
+    _seed_topic_prototype(classifier_conn, topic_id="history")
+
+    stats = _run(
+        scraper_db,
+        classifier_conn,
+        now=T0,
+        embedder=Embedder(_StubBackend()),
+        llm_client=_StubLlmClient(_pick_payload("history", 0.91)),
+        confidence_threshold=0.55,
+        retrieval_top_k=5,
+        ollama_model="test-ollama",
+        service_version="prism-test",
+    )
+
+    assert stats.classified_confident == 1
+    assert stats.classified_low_confidence == 0
+    assert _count(classifier_conn, "classifications") == 1
+    assert _count(classifier_conn, "topic_assignments") == 1
+    confidence, reason = _fetch_one(
+        classifier_conn,
+        "SELECT confidence, low_confidence_reason FROM classifications",
+    )
+    assert confidence == 0.91
+    assert reason is None
+    assert _event_rows(classifier_conn) == [
+        (
+            "content-ingested",
+            {
+                "contentType": "post",
+                "envelopeId": _envelope_id_for(classifier_conn, "t-1"),
+                "service": "x-sync",
+                "sourceId": "t-1",
+            },
+        ),
+        (
+            "content-classified",
+            {
+                "classifiedBy": (
+                    f"prism@prism-test + {MODEL_VERSION} + test-ollama"
+                ),
+                "confidence": 0.91,
+                "envelopeId": _envelope_id_for(classifier_conn, "t-1"),
+                "tags": [],
+                "topicAssignments": [
+                    {"confidence": 0.91, "topicId": "history"}
+                ],
+            },
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("llm_payload", "expected_reason", "expects_confidence"),
+    [
+        (_pick_payload("history", 0.42), "below-threshold", True),
+        (_pick_payload("", 0.8), "llm-pick-unsure", False),
+        (_pick_payload("science", 0.9), "out-of-band", False),
+        (
+            {"topic_id": "history", "confidence": 1.5, "reasoning": "bad"},
+            "llm-output-malformed",
+            False,
+        ),
+    ],
+)
+def test_ingest_classify_writes_low_confidence(
+    scraper_db: Path,
+    classifier_conn: sqlite3.Connection,
+    llm_payload: dict[str, Any],
+    expected_reason: str,
+    expects_confidence: bool,
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="roman archives")
+    _seed_topic_prototype(classifier_conn, topic_id="history")
+
+    stats = _run(
+        scraper_db,
+        classifier_conn,
+        now=T0,
+        embedder=Embedder(_StubBackend()),
+        llm_client=_StubLlmClient(llm_payload),
+        confidence_threshold=0.55,
+        retrieval_top_k=5,
+        ollama_model="test-ollama",
+        service_version="prism-test",
+    )
+
+    assert stats.classified_confident == 0
+    assert stats.classified_low_confidence == 1
+    assert _count(classifier_conn, "classifications") == 1
+    assert _count(classifier_conn, "topic_assignments") == 0
+    confidence, reason = _fetch_one(
+        classifier_conn,
+        "SELECT confidence, low_confidence_reason FROM classifications",
+    )
+    assert confidence is None
+    assert reason == expected_reason
+    events = _event_rows(classifier_conn)
+    assert [event_type for event_type, _payload in events] == [
+        "content-ingested",
+        "content-classified-low-confidence",
+    ]
+    low_payload = events[1][1]
+    assert low_payload["reason"] == expected_reason
+    assert low_payload["candidateTopics"] == [{"topicId": "history"}]
+    assert ("confidence" in low_payload) is expects_confidence
+    if expects_confidence:
+        assert low_payload["confidence"] == 0.42
+
+
+def test_ingest_classify_marks_failed_on_empty_retrieval(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="roman archives")
+
+    stats = _run(
+        scraper_db,
+        classifier_conn,
+        now=T0,
+        embedder=Embedder(_StubBackend()),
+        llm_client=_StubLlmClient(_pick_payload("history", 0.91)),
+        confidence_threshold=0.55,
+        retrieval_top_k=5,
+        ollama_model="test-ollama",
+        service_version="prism-test",
+    )
+
+    assert stats.classify_failed == 1
+    assert _count(classifier_conn, "classifications") == 0
+    assert _count(classifier_conn, "topic_assignments") == 0
+    status, attempts, last_error = _fetch_one(
+        classifier_conn,
+        "SELECT status, attempts, last_error FROM ingest_queue "
+        "WHERE source_event_id = ?",
+        (1,),
+    )
+    assert status == "pending"
+    assert attempts == 1
+    assert "classify.retrieval-empty" in last_error
+    assert _event_rows(classifier_conn) == [
+        (
+            "content-ingested",
+            {
+                "contentType": "post",
+                "envelopeId": _envelope_id_for(classifier_conn, "t-1"),
+                "service": "x-sync",
+                "sourceId": "t-1",
+            },
+        )
+    ]
+
+
+def test_ingest_classify_marks_failed_on_llm_exception(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="roman archives")
+    _seed_topic_prototype(classifier_conn, topic_id="history")
+
+    stats = _run(
+        scraper_db,
+        classifier_conn,
+        now=T0,
+        embedder=Embedder(_StubBackend()),
+        llm_client=_StubLlmClient(RuntimeError("boom")),
+        confidence_threshold=0.55,
+        retrieval_top_k=5,
+        ollama_model="test-ollama",
+        service_version="prism-test",
+    )
+
+    assert stats.classify_failed == 1
+    assert _count(classifier_conn, "classifications") == 0
+    status, attempts, last_error = _fetch_one(
+        classifier_conn,
+        "SELECT status, attempts, last_error FROM ingest_queue "
+        "WHERE source_event_id = ?",
+        (1,),
+    )
+    assert status == "pending"
+    assert attempts == 1
+    assert "classify.pick" in last_error
+    assert _event_rows(classifier_conn) == [
+        (
+            "content-ingested",
+            {
+                "contentType": "post",
+                "envelopeId": _envelope_id_for(classifier_conn, "t-1"),
+                "service": "x-sync",
+                "sourceId": "t-1",
+            },
+        )
+    ]
+
+
+def test_ingest_classify_skipped_when_disabled(
+    scraper_db: Path, classifier_conn: sqlite3.Connection
+) -> None:
+    with _writer(scraper_db) as w:
+        _seed_bookmark_created(w, tweet_id="t-1")
+        _seed_user(w)
+        _seed_tweet(w, tweet_id="t-1", text="roman archives")
+    _seed_topic_prototype(classifier_conn, topic_id="history")
+
+    stats = _run(
+        scraper_db,
+        classifier_conn,
+        now=T0,
+        embedder=Embedder(_StubBackend()),
+        llm_client=None,
+        service_version="prism-test",
+    )
+
+    assert stats.embedded == 1
+    assert stats.classified_confident == 0
+    assert stats.classified_low_confidence == 0
+    assert stats.classify_skipped_no_embedding == 0
+    assert stats.classify_failed == 0
+    assert _count(classifier_conn, "classifications") == 0
+    assert _count(classifier_conn, "topic_assignments") == 0
+    assert _count(classifier_conn, "events_outbox") == 0
 
 
 def test_no_embedder_leaves_embed_counters_and_table_empty(

@@ -25,6 +25,7 @@ from prism.config import CONFIG_PATH, load_config
 from prism.db import connect_sqlite
 from prism.ingest import ingest_once
 from prism.logs import log_event
+from prism.manifest import load_manifest
 from prism.tracing import configure_tracing
 
 if TYPE_CHECKING:
@@ -32,11 +33,13 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
+    import httpx
     from fastapi import FastAPI
 
     from prism.config import Config
     from prism.embedding import Embedder
     from prism.ingest import IngestStats
+    from prism.llm_client import LlmClient
 
 
 _BACKOFF_CAP_SECONDS = 30.0
@@ -49,6 +52,8 @@ class ServeState:
     scraper_conn: sqlite3.Connection
     classifier_conn: sqlite3.Connection
     embedder: Embedder | None
+    http_client: httpx.Client | None
+    llm_client: LlmClient | None
     task: asyncio.Task[None] | None
     shutdown: asyncio.Event
 
@@ -82,6 +87,7 @@ async def ingest_loop(
     state: ServeState,
     cfg: Config,
     *,
+    service_version: str,
     ingest_once_impl: Callable[..., IngestStats] = ingest_once,
 ) -> None:
     """Run ``ingest_once`` on ``cfg.ingest.poll_interval_ms`` cadence.
@@ -102,6 +108,11 @@ async def ingest_loop(
                 scraper_conn=state.scraper_conn,
                 classifier_conn=state.classifier_conn,
                 embedder=state.embedder,
+                llm_client=state.llm_client,
+                confidence_threshold=cfg.pipeline.topic.confidence_threshold,
+                retrieval_top_k=cfg.pipeline.topic.retrieval_top_k,
+                ollama_model=cfg.pipeline.topic.ollama_model,
+                service_version=service_version,
             )
             backoff_s = interval_s
         except Exception as exc:
@@ -135,9 +146,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     scraper_conn: sqlite3.Connection | None = None
     classifier_conn: sqlite3.Connection | None = None
+    http_client: httpx.Client | None = None
     state: ServeState | None = None
     try:
         cfg = load_config(CONFIG_PATH)
+        manifest = load_manifest(cfg.service.manifest_path)
         configure_tracing(cfg.audit)
         scraper_conn = connect_sqlite(
             cfg.ingest.scraper_db_path, load_vec=False
@@ -153,17 +166,38 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             from prism.embedding import create_default_embedder
 
             embedder = create_default_embedder()
+        llm_client: LlmClient | None = None
+        if cfg.ingest.classification_enabled:
+            import httpx
+
+            from prism.llm_client import OllamaClient
+
+            http_client = httpx.Client()
+            llm_client = OllamaClient(
+                base_url=cfg.pipeline.topic.ollama_url,
+                model=cfg.pipeline.topic.ollama_model,
+                client=http_client,
+            )
         state = ServeState(
             scraper_conn=scraper_conn,
             classifier_conn=classifier_conn,
             embedder=embedder,
+            http_client=http_client,
+            llm_client=llm_client,
             task=None,
             shutdown=asyncio.Event(),
         )
-        state.task = asyncio.create_task(ingest_loop(state, cfg))
+        state.task = asyncio.create_task(
+            ingest_loop(
+                state,
+                cfg,
+                service_version=manifest.identity.version,
+            )
+        )
         log_event(
             "serve.start",
             embedding_enabled=cfg.ingest.embedding_enabled,
+            classification_enabled=cfg.ingest.classification_enabled,
             poll_interval_ms=cfg.ingest.poll_interval_ms,
             phoenix_enabled=cfg.audit.phoenix.enabled,
         )
@@ -179,4 +213,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 scraper_conn.close()
             if classifier_conn is not None:
                 classifier_conn.close()
+            if http_client is not None:
+                http_client.close()
             log_event("serve.stop")

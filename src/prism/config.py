@@ -58,6 +58,7 @@ class IngestConfig(_Base):
     scraper_db_path: _Path
     poll_interval_ms: int
     embedding_enabled: bool = True
+    classification_enabled: bool = False
 
 
 class PhoenixConfig(_Base):

@@ -21,6 +21,7 @@ from rich.table import Table
 from prism.config import CONFIG_PATH, load_config
 from prism.db import connect_sqlite
 from prism.ingest import ingest_once
+from prism.manifest import load_manifest
 from prism.serve import validate_scraper_db_schema
 
 dev_app = typer.Typer(
@@ -142,10 +143,12 @@ def ingest_once_cmd(
 ) -> None:
     """Open the configured DBs, run a single ingest pass, print stats."""
     cfg = load_config(CONFIG_PATH)
+    manifest = load_manifest(cfg.service.manifest_path)
     scraper_conn = connect_sqlite(cfg.ingest.scraper_db_path, load_vec=False)
     classifier_conn = connect_sqlite(
         cfg.storage.sqlite_path, load_vec=cfg.storage.sqlite_vec
     )
+    http_client = None
     try:
         validate_scraper_db_schema(scraper_conn, cfg.ingest.scraper_db_path)
         embedder = None
@@ -153,13 +156,32 @@ def ingest_once_cmd(
             from prism.embedding import create_default_embedder
 
             embedder = create_default_embedder()
+        llm_client = None
+        if cfg.ingest.classification_enabled:
+            import httpx
+
+            from prism.llm_client import OllamaClient
+
+            http_client = httpx.Client()
+            llm_client = OllamaClient(
+                base_url=cfg.pipeline.topic.ollama_url,
+                model=cfg.pipeline.topic.ollama_model,
+                client=http_client,
+            )
         stats = ingest_once(
             scraper_conn=scraper_conn,
             classifier_conn=classifier_conn,
             embedder=embedder,
+            llm_client=llm_client,
+            confidence_threshold=cfg.pipeline.topic.confidence_threshold,
+            retrieval_top_k=cfg.pipeline.topic.retrieval_top_k,
+            ollama_model=cfg.pipeline.topic.ollama_model,
+            service_version=manifest.identity.version,
         )
         run_id = _latest_ingest_run_id(classifier_conn)
     finally:
+        if http_client is not None:
+            http_client.close()
         classifier_conn.close()
         scraper_conn.close()
 

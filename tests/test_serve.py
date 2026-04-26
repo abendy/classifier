@@ -26,7 +26,10 @@ _EMPTY_STATS = IngestStats(0, 0, 0, 0, 0, 0, 0)
 
 
 def _make_config(
-    *, poll_interval_ms: int = 1000, embedding_enabled: bool = True
+    *,
+    poll_interval_ms: int = 1000,
+    embedding_enabled: bool = True,
+    classification_enabled: bool = False,
 ) -> Config:
     return Config.model_validate(
         {
@@ -50,6 +53,7 @@ def _make_config(
                 "scraper_db_path": "/tmp/scraper.db",
                 "poll_interval_ms": poll_interval_ms,
                 "embedding_enabled": embedding_enabled,
+                "classification_enabled": classification_enabled,
             },
             "audit": {
                 "phoenix": {"enabled": False, "local_url": "http://x"},
@@ -74,6 +78,8 @@ def _make_state(embedder: Embedder | None = None) -> ServeState:
         scraper_conn=cast("sqlite3.Connection", object()),
         classifier_conn=cast("sqlite3.Connection", object()),
         embedder=embedder,
+        http_client=None,
+        llm_client=None,
         task=None,
         shutdown=asyncio.Event(),
     )
@@ -101,13 +107,24 @@ def test_ingest_loop_calls_ingest_once_repeatedly_until_shutdown() -> None:
 
     asyncio.run(
         asyncio.wait_for(
-            ingest_loop(state, cfg, ingest_once_impl=stub), timeout=2.0
+            ingest_loop(
+                state,
+                cfg,
+                service_version="prism-test",
+                ingest_once_impl=stub,
+            ),
+            timeout=2.0,
         )
     )
 
     assert len(received) >= 2
     for kw in received:
         assert kw["embedder"] is embedder
+        assert kw["llm_client"] is None
+        assert kw["confidence_threshold"] == cfg.pipeline.topic.confidence_threshold
+        assert kw["retrieval_top_k"] == cfg.pipeline.topic.retrieval_top_k
+        assert kw["ollama_model"] == cfg.pipeline.topic.ollama_model
+        assert kw["service_version"] == "prism-test"
         assert kw["scraper_conn"] is state.scraper_conn
         assert kw["classifier_conn"] is state.classifier_conn
 
@@ -125,7 +142,12 @@ def test_ingest_loop_exits_promptly_on_shutdown() -> None:
 
     async def driver() -> None:
         task = asyncio.create_task(
-            ingest_loop(state, cfg, ingest_once_impl=stub)
+            ingest_loop(
+                state,
+                cfg,
+                service_version="prism-test",
+                ingest_once_impl=stub,
+            )
         )
         await asyncio.sleep(0.05)
         state.shutdown.set()
@@ -156,7 +178,14 @@ def test_loop_exception_logs_and_doubles_backoff(
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
     cfg = _make_config(poll_interval_ms=1000)
-    asyncio.run(ingest_loop(state, cfg, ingest_once_impl=stub))
+    asyncio.run(
+        ingest_loop(
+            state,
+            cfg,
+            service_version="prism-test",
+            ingest_once_impl=stub,
+        )
+    )
 
     # interval_s baseline 1.0; failure doubles to 2, 4, 8, 16, then capped at 30
     assert recorded == [2.0, 4.0, 8.0, 16.0, 30.0]
@@ -195,7 +224,14 @@ def test_loop_backoff_resets_after_successful_pass(
     monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
 
     cfg = _make_config(poll_interval_ms=1000)
-    asyncio.run(ingest_loop(state, cfg, ingest_once_impl=stub))
+    asyncio.run(
+        ingest_loop(
+            state,
+            cfg,
+            service_version="prism-test",
+            ingest_once_impl=stub,
+        )
+    )
 
     # iter 1 raises → 2.0; iter 2 raises → 4.0; iter 3 ok → reset to 1.0;
     # iter 4 ok → 1.0
@@ -215,7 +251,13 @@ def test_embedder_none_passes_through_to_ingest_once() -> None:
 
     asyncio.run(
         asyncio.wait_for(
-            ingest_loop(state, cfg, ingest_once_impl=stub), timeout=2.0
+            ingest_loop(
+                state,
+                cfg,
+                service_version="prism-test",
+                ingest_once_impl=stub,
+            ),
+            timeout=2.0,
         )
     )
 
@@ -322,6 +364,45 @@ def test_lifespan_gates_embedder_on_embedding_enabled(
     assert factory_calls == 1
 
 
+def test_lifespan_constructs_and_closes_httpx_client_when_classification_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg_on = _make_config(
+        embedding_enabled=False,
+        classification_enabled=True,
+    )
+    _install_lifespan_stubs(monkeypatch, cfg_on)
+    app_on = FastAPI()
+    captured_client: Any = None
+
+    async def drive_on() -> None:
+        nonlocal captured_client
+        async with lifespan(app_on):
+            state = app_on.state.prism
+            assert state.http_client is not None
+            assert state.llm_client is not None
+            captured_client = state.http_client
+
+    asyncio.run(drive_on())
+    assert captured_client is not None
+    assert captured_client.is_closed is True
+
+    cfg_off = _make_config(
+        embedding_enabled=False,
+        classification_enabled=False,
+    )
+    _install_lifespan_stubs(monkeypatch, cfg_off)
+    app_off = FastAPI()
+
+    async def drive_off() -> None:
+        async with lifespan(app_off):
+            state = app_off.state.prism
+            assert state.http_client is None
+            assert state.llm_client is None
+
+    asyncio.run(drive_off())
+
+
 def test_ingest_loop_connection_usable_on_worker_thread(tmp_path: Path) -> None:
     """Regression: ``asyncio.to_thread`` must be able to use SQLite
     connections opened on the main thread. With the default
@@ -335,6 +416,8 @@ def test_ingest_loop_connection_usable_on_worker_thread(tmp_path: Path) -> None:
         scraper_conn=scraper_conn,
         classifier_conn=classifier_conn,
         embedder=None,
+        http_client=None,
+        llm_client=None,
         task=None,
         shutdown=asyncio.Event(),
     )
@@ -345,6 +428,7 @@ def test_ingest_loop_connection_usable_on_worker_thread(tmp_path: Path) -> None:
         scraper_conn: sqlite3.Connection,
         classifier_conn: sqlite3.Connection,
         embedder: Embedder | None,
+        **_: Any,
     ) -> IngestStats:
         del embedder
         try:
@@ -360,7 +444,13 @@ def test_ingest_loop_connection_usable_on_worker_thread(tmp_path: Path) -> None:
     try:
         asyncio.run(
             asyncio.wait_for(
-                ingest_loop(state, cfg, ingest_once_impl=stub), timeout=2.0
+                ingest_loop(
+                    state,
+                    cfg,
+                    service_version="prism-test",
+                    ingest_once_impl=stub,
+                ),
+                timeout=2.0,
             )
         )
     finally:
@@ -411,7 +501,10 @@ def test_lifespan_closes_connections_when_task_raises_on_shutdown(
     opens: list[_FakeConnection] = []
     _install_lifespan_stubs(monkeypatch, cfg, opens=opens)
 
-    async def raising_loop(state: ServeState, _cfg: Config) -> None:
+    async def raising_loop(
+        state: ServeState, _cfg: Config, *, service_version: str
+    ) -> None:
+        del service_version
         await state.shutdown.wait()
         raise RuntimeError("task exploded on shutdown")
 
